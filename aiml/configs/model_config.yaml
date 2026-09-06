@@ -1,0 +1,3 @@
+# Tune these values once real evaluation data exists.
+confidence_thresholds: {high_conf: 0.75, low_conf: 0.25}
+paths: {models_dir: "../models", data_dir: "../data"}

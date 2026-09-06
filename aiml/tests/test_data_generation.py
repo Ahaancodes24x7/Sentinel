@@ -1,0 +1,1 @@
+"""Tests for synthetic data generation, to be expanded with Stage 1 work."""

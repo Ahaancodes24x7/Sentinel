@@ -1,1 +1,0 @@
-"""MCQ engine package."""

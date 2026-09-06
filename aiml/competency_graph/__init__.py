@@ -1,1 +1,0 @@
-"""Competency graph package."""

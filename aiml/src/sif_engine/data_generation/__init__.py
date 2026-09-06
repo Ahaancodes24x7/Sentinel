@@ -1,0 +1,1 @@
+"""Synthetic safety-report data generation."""

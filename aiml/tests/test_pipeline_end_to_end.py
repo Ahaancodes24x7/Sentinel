@@ -1,0 +1,1 @@
+"""End-to-end pipeline tests, to be expanded as stages are implemented."""

@@ -1,0 +1,1 @@
+"""Tests for recurring precursor patterns, to be expanded with Stage 4 work."""

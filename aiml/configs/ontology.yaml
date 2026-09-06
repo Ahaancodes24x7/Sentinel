@@ -1,0 +1,42 @@
+activities:
+  - maintenance on process equipment
+  - hot work / welding near process line
+  - lifting operation with mobile crane
+  - confined space entry for tank cleaning
+  - vehicle movement within plant premises
+  - excavation near buried utility line
+  - electrical panel work
+  - scaffolding erection at height
+  - pipeline pigging operation
+  - routine equipment inspection
+energy_types:
+  stored/electrical energy: {is_high_energy: true, lsr_tag: Energy Isolation}
+  thermal (hot work): {is_high_energy: true, lsr_tag: Hot Work}
+  gravitational (suspended load): {is_high_energy: true, lsr_tag: Safe Mechanical Lifting}
+  kinetic (line of fire): {is_high_energy: true, lsr_tag: Line of Fire}
+  atmospheric/asphyxiation: {is_high_energy: true, lsr_tag: Confined Space}
+  vehicular/motion: {is_high_energy: true, lsr_tag: Driving}
+  fall from height: {is_high_energy: true, lsr_tag: Working at Height}
+  low-energy/ergonomic: {is_high_energy: false, lsr_tag: Work Authorisation}
+activity_energy_map:
+  maintenance on process equipment: [stored/electrical energy, low-energy/ergonomic]
+  hot work / welding near process line: [thermal (hot work), stored/electrical energy]
+  lifting operation with mobile crane: [gravitational (suspended load), kinetic (line of fire)]
+  confined space entry for tank cleaning: [atmospheric/asphyxiation, low-energy/ergonomic]
+  vehicle movement within plant premises: [vehicular/motion]
+  excavation near buried utility line: [stored/electrical energy, low-energy/ergonomic]
+  electrical panel work: [stored/electrical energy]
+  scaffolding erection at height: [fall from height, gravitational (suspended load)]
+  pipeline pigging operation: [stored/electrical energy, kinetic (line of fire)]
+  routine equipment inspection: [low-energy/ergonomic, stored/electrical energy]
+barrier_status_options: [confirmed_present, uncertain, absent_not_mentioned]
+barrier_status_phrases:
+  confirmed_present: [isolation was verified and tagged before work began, exclusion zone was established and maintained throughout, permit to work was signed off with all checks completed, gas test was conducted and confirmed safe prior to entry]
+  uncertain: [isolation status was not clearly confirmed by the crew, exclusion zone markers were present but not actively enforced, permit was raised but supervisor sign-off could not be located, gas test reportedly done earlier in the shift, not re-verified]
+  absent_not_mentioned: [no isolation was mentioned in the report, no exclusion zone was set up, work proceeded without a permit being sighted, ""]
+exposure_phrases:
+  direct_proximity: [a worker was standing within the immediate hazard zone, the contractor was positioned directly beneath the suspended load, personnel were within arm's reach of the live component, a technician was inside the equipment when work commenced]
+  indirect_proximity: [a worker was nearby but not directly in the hazard path, personnel were in the general work area at the time]
+  no_exposure: [no personnel were in the vicinity at the time, the area was clear of workers during the activity]
+outcome_phrases: [No injury occurred., "No injury occurred; worker moved away in time.", Minor first aid case reported., "Near miss — situation was corrected before escalation.", Reported as unsafe condition during routine walk-around.]
+sites: [Rig 4, Rig 7, Plant C, Well Site B, Field Station 2, Terminal A]

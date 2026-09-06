@@ -1,0 +1,11 @@
+pandas
+numpy
+scikit-learn
+PyYAML
+pytest
+# transformers
+# sentence-transformers
+# hdbscan
+# mlxtend
+# fastapi
+# uvicorn
