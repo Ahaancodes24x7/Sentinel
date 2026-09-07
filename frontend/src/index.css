@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-main: #0b0f17;
+    --bg-surface: #111827;
+    --bg-card: #161e2e;
+    --bg-card-hover: #1e293b;
+    --border-color: #1f293d;
+    --border-subtle: #2d3748;
+    
+    --semantic-red: #ef4444;
+    --semantic-red-glow: rgba(239, 68, 68, 0.15);
+    --semantic-amber: #f59e0b;
+    --semantic-amber-glow: rgba(245, 158, 11, 0.15);
+    --semantic-green: #10b981;
+    --semantic-green-glow: rgba(16, 185, 129, 0.15);
+    --semantic-blue: #3b82f6;
+    --semantic-blue-glow: rgba(59, 130, 246, 0.15);
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: #e2e8f0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom telemetry grid overlay */
+.bg-telemetry-grid {
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0b0f17;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f293d;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #374151;
+}
+
+/* Industrial metallic border effect */
+.border-industrial {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.border-industrial-red {
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.1);
+}
+.border-industrial-amber {
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.1);
+}
+.border-industrial-blue {
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.1);
+}
+
+/* Interactive text highlight for NLP spans */
+mark.span-highlight-red {
+  background-color: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  border-bottom: 2px solid #ef4444;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+mark.span-highlight-amber {
+  background-color: rgba(245, 158, 11, 0.25);
+  color: #fcd34d;
+  border-bottom: 2px solid #f59e0b;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+mark.span-highlight-blue {
+  background-color: rgba(59, 130, 246, 0.25);
+  color: #93c5fd;
+  border-bottom: 2px solid #3b82f6;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+/* Monospace telemetry numbers */
+.font-telemetry {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  letter-spacing: -0.02em;
+}
