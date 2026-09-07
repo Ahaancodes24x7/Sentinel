@@ -99,9 +99,16 @@ class PaginatedReports(BaseModel):
     offset: int
 
 
-class ExtractedSpanField(BaseModel):
+class EvidenceSpanItem(BaseModel):
+    field: str
     text: str
     span: tuple[int, int]
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class ExtractedSpanField(BaseModel):
+    text: str
+    span: Optional[tuple[int, int]] = None
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -113,9 +120,13 @@ class ExtractedLabelField(BaseModel):
 
 class ExtractedFields(BaseModel):
     activity: ExtractedSpanField
+    hazard: Optional[ExtractedSpanField] = None
     energy_type: ExtractedLabelField
-    barrier_status: ExtractedLabelField
     exposure: ExtractedLabelField
+    barrier: Optional[ExtractedSpanField] = None
+    barrier_status: ExtractedLabelField
+    location: Optional[ExtractedSpanField] = None
+    evidence_spans: list[EvidenceSpanItem] = Field(default_factory=list)
 
 
 class Classification(BaseModel):

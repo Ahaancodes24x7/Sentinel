@@ -45,25 +45,58 @@ def _load_ontology() -> dict[str, Any]:
 def _extract_heuristic_fields(text: str, lsr_tag: str) -> dict[str, Any]:
     """
     Stage 1 heuristic extraction:
-    Scans text against the ontology for matched phrases and spans.
-    Marked as heuristic/provisional until Stage 1 transformer NER model is trained.
+    Scans raw text against the ontology and keywords for matched phrases and spans.
+    Strictly calculates character spans against the EXACT original report text.
+    Unsupported or unmatched fields are marked as unavailable/uncertain with span=None.
     """
     ontology = _load_ontology()
     lower_text = text.lower()
+    evidence_spans: list[dict[str, Any]] = []
 
     # 1. Activity
-    activity_text = "general industrial activity"
-    activity_span = (0, min(len(text), 30))
+    activity_text = "unspecified activity"
+    activity_span = None
     activity_conf = 0.60
     for act in ontology.get("activities", []):
         m = re.search(re.escape(act.lower()), lower_text)
         if m:
-            activity_text = text[m.start():m.end()]
             activity_span = (m.start(), m.end())
+            activity_text = text[m.start():m.end()]
             activity_conf = 0.88
+            evidence_spans.append({
+                "field": "activity",
+                "text": activity_text,
+                "span": activity_span,
+                "confidence": activity_conf,
+            })
             break
 
-    # 2. Energy Type
+    # 2. Hazard
+    hazard_data = None
+    hazard_terms = [
+        "hazard zone", "live component", "suspended load", "h2s", "gas leak",
+        "pressure release", "steam leak", "falling object", "rotating equipment",
+        "fire", "electrical shock", "open flange", "unshielded", "toxic vapor",
+    ]
+    for haz in hazard_terms:
+        m = re.search(r"\b" + re.escape(haz) + r"\b", lower_text)
+        if m:
+            h_span = (m.start(), m.end())
+            h_text = text[m.start():m.end()]
+            hazard_data = {
+                "text": h_text,
+                "span": h_span,
+                "confidence": 0.85,
+            }
+            evidence_spans.append({
+                "field": "hazard",
+                "text": h_text,
+                "span": h_span,
+                "confidence": 0.85,
+            })
+            break
+
+    # 3. Energy Type
     energy_label = "unspecified/general energy"
     energy_conf = 0.65
     energy_span = None
@@ -72,8 +105,46 @@ def _extract_heuristic_fields(text: str, lsr_tag: str) -> dict[str, Any]:
             energy_label = et
             energy_conf = 0.85
             break
+    # Optional direct keyword match for energy span
+    energy_keywords = ["electrical", "stored energy", "high pressure", "thermal", "steam", "hydraulic", "gravity", "kinetic"]
+    for ek in energy_keywords:
+        m = re.search(r"\b" + re.escape(ek) + r"\b", lower_text)
+        if m:
+            energy_span = (m.start(), m.end())
+            evidence_spans.append({
+                "field": "energy_type",
+                "text": text[m.start():m.end()],
+                "span": energy_span,
+                "confidence": 0.85,
+            })
+            break
 
-    # 3. Barrier Status
+    # 4. Barrier
+    barrier_data = None
+    barrier_terms = [
+        "isolation", "permit to work", "ptw", "lockout", "tagout", "loto",
+        "exclusion zone", "gas test", "scaffolding tag", "barrier tape",
+        "guard rail", "interlock", "ventilation", "life line", "safety harness",
+    ]
+    for b_term in barrier_terms:
+        m = re.search(r"\b" + re.escape(b_term) + r"\b", lower_text)
+        if m:
+            b_span = (m.start(), m.end())
+            b_text = text[m.start():m.end()]
+            barrier_data = {
+                "text": b_text,
+                "span": b_span,
+                "confidence": 0.86,
+            }
+            evidence_spans.append({
+                "field": "barrier",
+                "text": b_text,
+                "span": b_span,
+                "confidence": 0.86,
+            })
+            break
+
+    # 5. Barrier Status
     barrier_label = "uncertain"
     barrier_span = None
     barrier_conf = 0.70
@@ -86,12 +157,18 @@ def _extract_heuristic_fields(text: str, lsr_tag: str) -> dict[str, Any]:
                     barrier_label = status_key
                     barrier_span = (m.start(), m.end())
                     barrier_conf = 0.86
+                    evidence_spans.append({
+                        "field": "barrier_status",
+                        "text": text[m.start():m.end()],
+                        "span": barrier_span,
+                        "confidence": barrier_conf,
+                    })
                     found_barrier = True
                     break
         if found_barrier:
             break
 
-    # 4. Exposure
+    # 6. Exposure
     exposure_label = "direct_proximity"
     exposure_span = None
     exposure_conf = 0.70
@@ -104,9 +181,39 @@ def _extract_heuristic_fields(text: str, lsr_tag: str) -> dict[str, Any]:
                     exposure_label = exp_key
                     exposure_span = (m.start(), m.end())
                     exposure_conf = 0.88
+                    evidence_spans.append({
+                        "field": "exposure",
+                        "text": text[m.start():m.end()],
+                        "span": exposure_span,
+                        "confidence": exposure_conf,
+                    })
                     found_exposure = True
                     break
         if found_exposure:
+            break
+
+    # 7. Location
+    location_data = None
+    location_terms = ontology.get("sites", []) + [
+        "confined space", "tank", "vessel", "manifold", "rig floor", "deck",
+        "warehouse", "cellar pit", "substructure", "derrick", "drilling floor",
+    ]
+    for loc in location_terms:
+        m = re.search(r"\b" + re.escape(loc.lower()) + r"\b", lower_text)
+        if m:
+            loc_span = (m.start(), m.end())
+            loc_text = text[m.start():m.end()]
+            location_data = {
+                "text": loc_text,
+                "span": loc_span,
+                "confidence": 0.88,
+            }
+            evidence_spans.append({
+                "field": "location",
+                "text": loc_text,
+                "span": loc_span,
+                "confidence": 0.88,
+            })
             break
 
     return {
@@ -115,21 +222,25 @@ def _extract_heuristic_fields(text: str, lsr_tag: str) -> dict[str, Any]:
             "span": activity_span,
             "confidence": activity_conf,
         },
+        "hazard": hazard_data,
         "energy_type": {
             "label": energy_label,
             "confidence": energy_conf,
             "span": energy_span,
-        },
-        "barrier_status": {
-            "label": barrier_label,
-            "confidence": barrier_conf,
-            "span": barrier_span,
         },
         "exposure": {
             "label": exposure_label,
             "confidence": exposure_conf,
             "span": exposure_span,
         },
+        "barrier": barrier_data,
+        "barrier_status": {
+            "label": barrier_label,
+            "confidence": barrier_conf,
+            "span": barrier_span,
+        },
+        "location": location_data,
+        "evidence_spans": evidence_spans,
     }
 
 
