@@ -54,6 +54,17 @@ class TestEvidenceExtractor:
             assert loc["value"] == site
             assert text[loc["span"][0]:loc["span"][1]] == site
 
+    def test_pipeline_evidence_spans_use_raw_text(self):
+        """The assembled pipeline output keeps every span aligned to raw text."""
+        raw_text = (
+            "During hot work at Rig 7, a worker was standing within the immediate hazard zone. "
+            "No isolation was established."
+        )
+        result = run_single("span_pipeline", raw_text)
+        for item in result["extracted_fields"]["evidence_spans"]:
+            start, end = item["span"]
+            assert raw_text[start:end] == item["text"]
+
     def test_barrier_four_distinct_states(self):
         """Barrier status must implement 4 states with precise gap severities."""
         # 1. Confirmed -> 0.0
@@ -78,6 +89,16 @@ class TestEvidenceExtractor:
 
 
 class TestConsistencyAndNearMiss:
+    def test_fallback_energy_provenance(self):
+        """A heuristic energy result is explicitly marked and confidence-reduced."""
+        result = classify_energy(
+            raw_text="A hot work task exposed a worker to the hazard zone.",
+            hazard_category="hot_work",
+            model_name="missing-model",
+        )
+        assert result["source"] == "fallback"
+        assert result["confidence"] < 0.75
+
     def test_near_miss_preservation(self):
         """'No injury occurred' + direct exposure must NOT be marked as contradictory."""
         raw_text = (

@@ -59,6 +59,7 @@ try:
         EvidenceDetail,
         EvidenceSpanItem,
         EvidenceSummary,
+        ExtractedEnvironmentField,
         ExtractedFields,
         ExtractedLabelField,
         ExtractedSpanField,
@@ -87,6 +88,10 @@ try:
         ReviewActionResponse,
         ReviewActionType,
         Role,
+        SiteComparisonResponse,
+        SiteDetailResponse,
+        SiteListResponse,
+        SiteSummaryItem,
         Source,
         TrendAlert,
         TrendPoint,
@@ -121,6 +126,7 @@ except ImportError:
         EvidenceDetail,
         EvidenceSpanItem,
         EvidenceSummary,
+        ExtractedEnvironmentField,
         ExtractedFields,
         ExtractedLabelField,
         ExtractedSpanField,
@@ -149,11 +155,16 @@ except ImportError:
         ReviewActionResponse,
         ReviewActionType,
         Role,
+        SiteComparisonResponse,
+        SiteDetailResponse,
+        SiteListResponse,
+        SiteSummaryItem,
         Source,
         TrendAlert,
         TrendPoint,
         TrendsResponse,
     )
+
 
 from contextlib import asynccontextmanager
 
@@ -455,6 +466,54 @@ def get_report_detail(
     ext = record.extracted_fields
     clf = record.classification
 
+    # Extract or infer environment field
+    env_field = None
+    if ext.get("environment"):
+        env_field = ExtractedEnvironmentField(**ext["environment"])
+    else:
+        try:
+            from sif_engine.extraction.environment_extractor import extract_environment
+            env_res = extract_environment(record.report_text)
+            env_field = ExtractedEnvironmentField(**env_res)
+        except Exception:
+            env_field = None
+
+    # Extract or infer structured reasoning object
+    reasoning_data = ext.get("reasoning")
+    if not reasoning_data:
+        try:
+            from sif_engine.reasoning.scl_reasoner import reason
+            from sif_engine.extraction.energy_classifier import classify_energy
+            from sif_engine.reasoning.consistency import validate_consistency
+            eng = classify_energy(record.report_text)
+            cons = validate_consistency(ext, eng)
+            r_res = reason(ext, eng, cons)
+            reasoning_data = {
+                "sif_potential": r_res["sif_potential"],
+                "confidence": clf.get("confidence", 0.85),
+                "bucket": clf.get("bucket", "HIGH_CONF_SIF" if r_res["sif_potential"] else "HIGH_CONF_NON_SIF"),
+                "lsr_tag": r_res.get("lsr_tag", clf.get("lsr_tag", "Other")),
+                "credible_consequence": r_res.get("credible_consequence", {}),
+                "barrier_status": r_res.get("barrier_status", ext.get("barrier_status", {}).get("label")),
+                "barrier_gap_severity": r_res.get("barrier_gap_severity"),
+                "exposure_mode": ext.get("exposure", {}).get("label"),
+                "candidate_needs_info": r_res.get("candidate_needs_info", False),
+                "contradictions_detected": r_res.get("contradictions_detected", []),
+                "audit_justification": r_res.get("justification", clf.get("justification", "")),
+                "decision_factors": r_res.get("decision_factors", {}),
+            }
+        except Exception:
+            reasoning_data = None
+
+    # Resolve site intelligence metadata
+    site_info = None
+    try:
+        from sif_engine.site_intelligence.site_registry import get_site_by_id, normalize_site_name
+        norm_name = normalize_site_name(record.site)
+        site_info = get_site_by_id(norm_name)
+    except Exception:
+        site_info = None
+
     return ReportDetail(
         report_id=record.report_id,
         site=record.site,
@@ -469,6 +528,7 @@ def get_report_detail(
             barrier=ExtractedSpanField(**ext["barrier"]) if ext.get("barrier") else None,
             barrier_status=ExtractedLabelField(**ext["barrier_status"]),
             location=ExtractedSpanField(**ext["location"]) if ext.get("location") else None,
+            environment=env_field,
             evidence_spans=[EvidenceSpanItem(**s) for s in ext.get("evidence_spans", [])],
         ),
         classification=Classification(
@@ -480,7 +540,76 @@ def get_report_detail(
             model_version=clf["model_version"],
         ),
         review_status=record.review_status,
+        reasoning=reasoning_data,
+        site_intelligence=site_info,
     )
+
+
+# ---------------------------------------------------------------------------
+# Site Intelligence Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/api/v1/sites", response_model=SiteListResponse, tags=["sites"])
+def list_sites(user: tuple[str, Role] = Depends(get_current_user)):
+    """Return all canonical OIL sites and prototype demonstration units."""
+    from sif_engine.site_intelligence.site_registry import get_all_sites
+    sites_list = get_all_sites()
+    return SiteListResponse(sites=[SiteSummaryItem(**s) for s in sites_list])
+
+
+@app.get("/api/v1/sites/compare", response_model=SiteComparisonResponse, tags=["sites"])
+def compare_sites_endpoint(
+    sites: str = Query(default="rig_4,rig_7,plant_c", description="Comma-separated site IDs or names"),
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Compare multiple sites on precursor metrics, barrier profiles, and hazard types."""
+    from sif_engine.site_intelligence.site_analytics import compare_sites
+    site_ids = [s.strip() for s in sites.split(",") if s.strip()]
+    
+    # Fetch all reports from db to compute live comparative analytics
+    records = db.query(ReportModel).all()
+    report_dicts = [
+        {
+            "report_id": r.report_id,
+            "site": r.site,
+            "report_text": r.report_text,
+            "sif_potential": r.sif_potential,
+            "lsr_tag": r.lsr_tag,
+            "extracted_fields": r.extracted_fields,
+            "classification": r.classification,
+        }
+        for r in records
+    ]
+    res = compare_sites(report_dicts, site_ids)
+    return SiteComparisonResponse(**res)
+
+
+@app.get("/api/v1/sites/{site_id}", response_model=SiteDetailResponse, tags=["sites"])
+def get_site_detail(
+    site_id: str,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get site detail and operational risk profile computed over database reports."""
+    from sif_engine.site_intelligence.site_analytics import compute_site_analytics
+    from sif_engine.site_intelligence.site_registry import get_site_by_id
+
+    records = db.query(ReportModel).all()
+    report_dicts = [
+        {
+            "report_id": r.report_id,
+            "site": r.site,
+            "report_text": r.report_text,
+            "sif_potential": r.sif_potential,
+            "lsr_tag": r.lsr_tag,
+            "extracted_fields": r.extracted_fields,
+            "classification": r.classification,
+        }
+        for r in records
+    ]
+    analytics = compute_site_analytics(report_dicts, target_site_id_or_name=site_id)
+    return SiteDetailResponse(**analytics)
+
 
 
 # ---------------------------------------------------------------------------

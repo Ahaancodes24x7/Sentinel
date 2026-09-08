@@ -118,6 +118,16 @@ class ExtractedLabelField(BaseModel):
     span: Optional[tuple[int, int]] = None
 
 
+class ExtractedEnvironmentField(BaseModel):
+    category: Optional[str] = None
+    text: Optional[str] = None
+    span: Optional[tuple[int, int]] = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    negated: bool = False
+    provenance: str = "exact_span"
+    all_detected: list[dict] = Field(default_factory=list)
+
+
 class ExtractedFields(BaseModel):
     activity: ExtractedSpanField
     hazard: Optional[ExtractedSpanField] = None
@@ -126,6 +136,7 @@ class ExtractedFields(BaseModel):
     barrier: Optional[ExtractedSpanField] = None
     barrier_status: ExtractedLabelField
     location: Optional[ExtractedSpanField] = None
+    environment: Optional[ExtractedEnvironmentField] = None
     evidence_spans: list[EvidenceSpanItem] = Field(default_factory=list)
 
 
@@ -148,6 +159,55 @@ class ReportDetail(BaseModel):
     extracted_fields: ExtractedFields
     classification: Classification
     review_status: str  # "pending" | "confirmed" | "corrected" | "rejected"
+    reasoning: Optional[dict] = None
+    site_intelligence: Optional[dict] = None
+
+
+# ---------------------------------------------------------------------------
+# Site Intelligence
+# ---------------------------------------------------------------------------
+class SiteSummaryItem(BaseModel):
+    site_id: str
+    canonical_name: str
+    region: str
+    state: str
+    facility_type: str
+    latitude: float
+    longitude: float
+    is_synthetic_prototype: bool
+    parent_asset: Optional[str] = None
+    description: str = ""
+    demonstration_notice: str = "SYNTHETIC DEMONSTRATION DATA"
+
+
+class SiteListResponse(BaseModel):
+    sites: list[SiteSummaryItem]
+
+
+class SiteDetailResponse(BaseModel):
+    site: str
+    site_id: str
+    region: str
+    state: str
+    facility_type: str
+    total_reports: int
+    sif_precursor_count: int
+    precursor_density: float
+    density_formula: str
+    top_lsrs: list[dict]
+    top_activities: list[dict]
+    barrier_profile: dict
+    trend_direction: str
+    trend_pct: float
+    is_synthetic_prototype: bool
+    demonstration_notice: str
+
+
+class SiteComparisonResponse(BaseModel):
+    compared_sites_count: int
+    sites: list[dict]
+    demonstration_notice: str
+
 
 
 # ---------------------------------------------------------------------------
