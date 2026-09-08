@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* --font-plex-sans / --font-plex-mono are injected by next/font/local
+     (see app/fonts.ts) — self-hosted IBM Plex, offline-safe. */
+
+  /* Structural palette */
+  --ink: #12140f;
+  --panel: #f4f2ec;
+  --surface: #fbfaf7;
+  --line: #c9c6bc;
+  --steel: #3a4750;
+  --steel-fg: #eef1f2;
+  --focus: #1d6fb8;
+  --muted: #5a5f55;
+
+  /* Semantic status ramp — color does real work here, not decoration */
+  --danger: #b3261e;
+  --caution: #c77700;
+  --clear: #2e6b3e;
+  --neutral: #5a5f55;
+
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-plex-sans), -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 0;
+}
+
+/* Visible keyboard focus everywhere — demoed on unpredictable hardware */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Field-name / label vernacular: permit-form uppercase */
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Barrier-tape motif — reserved for the single highest-severity element on a screen */
+.hazard-stripe {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--danger) 0,
+    var(--danger) 8px,
+    var(--ink) 8px,
+    var(--ink) 16px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
