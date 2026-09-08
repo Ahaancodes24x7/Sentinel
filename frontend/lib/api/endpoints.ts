@@ -7,6 +7,7 @@ import { apiFetch } from "./client";
 import {
   LoginResponseSchema,
   MeResponseSchema,
+  AccessRequestResponseSchema,
   ReportDetailSchema,
   PaginatedReportsSchema,
   ReviewActionResponseSchema,
@@ -21,6 +22,8 @@ import {
   PaginatedAuditLogSchema,
   type LoginResponse,
   type MeResponse,
+  type AccessRequest,
+  type AccessRequestResponse,
   type ReportDetail,
   type PaginatedReports,
   type ReviewActionRequest,
@@ -52,6 +55,17 @@ export function login(
 
 export function me(): Promise<MeResponse> {
   return apiFetch("/auth/me", { schema: MeResponseSchema });
+}
+
+export function requestAccess(
+  body: AccessRequest
+): Promise<AccessRequestResponse> {
+  return apiFetch("/auth/register", {
+    schema: AccessRequestResponseSchema,
+    method: "POST",
+    body,
+    auth: false,
+  });
 }
 
 export function getReport(reportId: string): Promise<ReportDetail> {

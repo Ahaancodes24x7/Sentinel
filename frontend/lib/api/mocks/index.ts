@@ -73,6 +73,22 @@ export async function resolveMock(path: string, call: MockCall): Promise<unknown
     return { username: "manager_demo", role: "hse_manager" };
   }
 
+  if (key === "POST /auth/register") {
+    const b = (call.body ?? {}) as Record<string, unknown>;
+    const email = typeof b.email === "string" ? b.email : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new ApiError({
+        code: "VALIDATION_ERROR",
+        message: "A valid work email is required.",
+        status: 422,
+      });
+    }
+    return {
+      status: "pending_approval",
+      reference: `AR-${Date.now().toString(36).toUpperCase().slice(-6)}`,
+    };
+  }
+
   // --- report detail --------------------------------------------------
   const detail = path.match(/^\/reports\/([^/]+)$/);
   if (detail && call.method === "GET") {

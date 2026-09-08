@@ -154,6 +154,26 @@ export const MeResponseSchema = z.object({
 });
 export type MeResponse = z.infer<typeof MeResponseSchema>;
 
+/**
+ * Access request — POST /auth/register. The console does not self-serve
+ * accounts; a request is queued for an administrator to provision.
+ */
+export interface AccessRequest {
+  full_name: string;
+  email: string;
+  organisation: string;
+  requested_role: Role;
+  justification: string;
+}
+
+export const AccessRequestResponseSchema = z.object({
+  status: z.literal("pending_approval"),
+  reference: z.string(),
+});
+export type AccessRequestResponse = z.infer<
+  typeof AccessRequestResponseSchema
+>;
+
 /* ------------------------------------------------------------------ *
  * Review queue — GET /review-queue (PaginatedReports shape) +
  * POST /review-queue/{report_id}/action
