@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any, Optional
 import yaml
 
-from backend.schemas import Bucket
+
+HIGH_CONF_SIF = "HIGH_CONF_SIF"
+LOW_CONF_REVIEW = "LOW_CONF_REVIEW"
+HIGH_CONF_NON_SIF = "HIGH_CONF_NON_SIF"
+NEEDS_MORE_INFO = "NEEDS_MORE_INFO"
 
 
 def _load_thresholds() -> dict[str, float]:
@@ -65,16 +69,22 @@ def route_prediction(
     gap_severity = decision_factors.get("gap_severity")
 
     # -----------------------------------------------------------------------
+    # 0. Active Contradiction Detection -> LOW_CONF_REVIEW
+    # -----------------------------------------------------------------------
+    if consistency_result.get("contradiction_detected", False):
+        return LOW_CONF_REVIEW, round(calibrated_confidence, 3)
+
+    # -----------------------------------------------------------------------
     # 1. Definite Non-SIF: Strong evidence (low energy, confirmed barrier, or no exposure)
     # -----------------------------------------------------------------------
-    if not sif_potential and (is_low_energy or barrier_confirmed or no_exposure) and is_consistent:
-        return Bucket.HIGH_CONF_NON_SIF.value, round(calibrated_confidence, 3)
+    if not sif_potential and (is_low_energy or barrier_confirmed or no_exposure) and is_consistent and barrier_status != "uncertain":
+        return HIGH_CONF_NON_SIF, round(calibrated_confidence, 3)
 
     # -----------------------------------------------------------------------
     # 2. NEEDS_MORE_INFO: Critical field omitted on potential high-energy candidate
     # -----------------------------------------------------------------------
     if candidate_needs_info or (decision_factors.get("is_high_energy") and barrier_status == "not_mentioned"):
-        return Bucket.NEEDS_MORE_INFO.value, round(calibrated_confidence, 3)
+        return NEEDS_MORE_INFO, round(calibrated_confidence, 3)
 
     # -----------------------------------------------------------------------
     # 3. SIF = True pathway
@@ -89,29 +99,23 @@ def route_prediction(
         no_conflict = is_consistent and not has_warnings
 
         if is_explicit_gap and no_conflict and calibrated_confidence >= high_th:
-            return Bucket.HIGH_CONF_SIF.value, round(calibrated_confidence, 3)
+            return HIGH_CONF_SIF, round(calibrated_confidence, 3)
         else:
             # Uncertain barrier (0.6), fallback energy, consistency warnings, or modest confidence
             # -> Route to LOW_CONF_REVIEW
-            return Bucket.LOW_CONF_REVIEW.value, round(calibrated_confidence, 3)
+            return LOW_CONF_REVIEW, round(calibrated_confidence, 3)
 
     # -----------------------------------------------------------------------
-    # 3. SIF = False pathway
+    # 4. SIF = False pathway
     # -----------------------------------------------------------------------
     # Check for strong evidence supporting non-SIF:
     # e.g. barrier confirmed present, explicit no-exposure, or confirmed low energy
-    barrier_confirmed = barrier_status == "confirmed"
-    is_low_energy = not decision_factors.get("is_high_energy", True)
-    no_exposure = not decision_factors.get("has_exposure", True)
-
-    if (barrier_confirmed or is_low_energy or no_exposure) and is_consistent:
+    if (barrier_confirmed or is_low_energy or no_exposure) and is_consistent and barrier_status != "uncertain":
         if calibrated_confidence >= low_th:
-            return Bucket.HIGH_CONF_NON_SIF.value, round(calibrated_confidence, 3)
+            return HIGH_CONF_NON_SIF, round(calibrated_confidence, 3)
 
-    if has_warnings or calibrated_confidence < low_th:
-        return Bucket.LOW_CONF_REVIEW.value, round(calibrated_confidence, 3)
+    return LOW_CONF_REVIEW, round(calibrated_confidence, 3)
 
-    return Bucket.HIGH_CONF_NON_SIF.value, round(calibrated_confidence, 3)
 
 
 def route(probability: float, prediction: int) -> str:
@@ -121,6 +125,6 @@ def route(probability: float, prediction: int) -> str:
     low_th = thresholds.get("low_conf", 0.25)
 
     if prediction == 1:
-        return Bucket.HIGH_CONF_SIF.value if probability >= high_th else Bucket.LOW_CONF_REVIEW.value
+        return HIGH_CONF_SIF if probability >= high_th else LOW_CONF_REVIEW
     else:
-        return Bucket.HIGH_CONF_NON_SIF.value if probability >= (1.0 - low_th) else Bucket.LOW_CONF_REVIEW.value
+        return HIGH_CONF_NON_SIF if probability >= (1.0 - low_th) else LOW_CONF_REVIEW

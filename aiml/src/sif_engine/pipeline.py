@@ -288,12 +288,19 @@ def run_single(
     extracted_loc = evidence.get("location", {})
     resolved_site = extracted_loc.get("value") or site
 
+    # Extract contextual safety environment (17 categories, exact raw spans, negation-aware)
+    from sif_engine.extraction.environment_extractor import extract_environment
+    from sif_engine.site_intelligence.site_registry import normalize_site_name, get_site_by_id
+    environment_result = extract_environment(raw_text)
+    resolved_canonical_site = normalize_site_name(resolved_site)
+    site_metadata = get_site_by_id(resolved_canonical_site)
+
     # Extract hazard category
     hazard_info = evidence.get("hazard", {})
     best_hazard = hazard_info.get("best_category")
 
     # -----------------------------------------------------------------------
-    # Energy Classification (with model vs fallback transparency)
+    # Energy Classification (with model vs fallback transparency & rule gate)
     # -----------------------------------------------------------------------
     energy_classification = classify_energy(
         raw_text=raw_text,
@@ -312,7 +319,7 @@ def run_single(
     )
 
     # -----------------------------------------------------------------------
-    # Stage 2: SCL Reasoner
+    # Stage 2: SCL Reasoner (Authoritative Reasoning Engine)
     # -----------------------------------------------------------------------
     reasoner_result = reason(
         evidence=evidence,
@@ -344,29 +351,32 @@ def run_single(
     # Activity span
     act_data = evidence.get("activity", {})
     activity_field = {
-        "text": act_data.get("text", "general industrial activity"),
-        "span": act_data.get("span", (0, min(len(raw_text), 30))),
-        "confidence": act_data.get("confidence", 0.80),
+        "text": act_data.get("text", "unspecified activity"),
+        "span": act_data.get("span"),
+        "confidence": act_data.get("confidence", 0.50),
     }
 
-    # Energy span (first matched hazard span if available)
-    energy_span = None
-    if best_hazard and hazard_info.get("matches", {}).get(best_hazard):
-        energy_span = hazard_info["matches"][best_hazard][0].span
 
     energy_field = {
         "label": energy_classification.get("label", "unspecified energy"),
         "confidence": energy_classification.get("confidence", 0.70),
-        "span": energy_span,
+        "span": None,
     }
 
     # Barrier span
     barrier_data = evidence.get("barrier")
     barrier_span = None
+    barrier_text = ""
     if barrier_data and barrier_data.evidence:
         barrier_span = barrier_data.evidence[0].span
+        barrier_text = barrier_data.evidence[0].text
 
     barrier_field = {
+        "text": barrier_text,
+        "confidence": getattr(barrier_data, "confidence", 0.80) if barrier_data else 0.70,
+        "span": barrier_span,
+    }
+    barrier_status_field = {
         "label": barrier_status,
         "confidence": getattr(barrier_data, "confidence", 0.80) if barrier_data else 0.70,
         "span": barrier_span,
@@ -383,10 +393,11 @@ def run_single(
     # Hazard span
     hazard_field = None
     if best_hazard:
+        first_hazard = hazard_info["matches"][best_hazard][0]
         hazard_field = {
-            "label": best_hazard,
+            "text": first_hazard.text,
             "confidence": 0.85,
-            "span": energy_span,
+            "span": first_hazard.span,
         }
 
     # Location span
@@ -398,16 +409,80 @@ def run_single(
             "confidence": extracted_loc.get("confidence", 0.95),
         }
 
+    # Contextual Safety Environment field
+    environment_field = {
+        "category": environment_result.get("category"),
+        "text": environment_result.get("text"),
+        "span": environment_result.get("span"),
+        "confidence": environment_result.get("confidence", 0.0),
+        "negated": environment_result.get("negated", False),
+        "provenance": environment_result.get("provenance", "none"),
+        "all_detected": environment_result.get("all_detected", []),
+    }
+
+    # Keep all extracted evidence in raw-text coordinates for audit and UI use.
+    evidence_spans = []
+    if act_data.get("span"):
+        evidence_spans.append({
+            "field": "activity",
+            "text": act_data["text"],
+            "span": act_data["span"],
+            "confidence": act_data.get("confidence", 0.80),
+        })
+    for match in hazard_info.get("matches", {}).values():
+        for item in match:
+            evidence_spans.append({
+                "field": "hazard",
+                "text": item.text,
+                "span": item.span,
+                "confidence": 0.85,
+            })
+    for item in exp_data.get("evidence", []):
+        evidence_spans.append({
+            "field": "exposure",
+            "text": item.text,
+            "span": item.span,
+            "confidence": exp_data.get("confidence", 0.75),
+        })
+    if barrier_data:
+        for item in barrier_data.evidence:
+            evidence_spans.append({
+                "field": "barrier_status",
+                "text": item.text,
+                "span": item.span,
+                "confidence": getattr(barrier_data, "confidence", 0.70),
+            })
+    if extracted_loc.get("value"):
+        evidence_spans.append({
+            "field": "location",
+            "text": extracted_loc["value"],
+            "span": extracted_loc["span"],
+            "confidence": extracted_loc.get("confidence", 0.95),
+        })
+    if environment_result.get("span"):
+        evidence_spans.append({
+            "field": "environment",
+            "text": environment_result["text"],
+            "span": environment_result["span"],
+            "confidence": environment_result.get("confidence", 0.80),
+        })
+
     extracted_fields = {
         "activity": activity_field,
         "energy_type": energy_field,
-        "barrier_status": barrier_field,
+        "barrier_status": barrier_status_field,
         "exposure": exposure_field,
         "hazard": hazard_field,
+        "barrier": barrier_field if barrier_data and barrier_data.evidence else None,
         "location": location_field,
+        "environment": environment_field,
+        "evidence_spans": evidence_spans,
     }
 
-    model_ver = energy_classification.get("model_version", "baseline2-v0.3")
+    model_ver = energy_classification.get(
+        "model_version",
+        "rule-fallback-v0.1" if energy_classification.get("source") == "fallback" else "baseline2-v0.3",
+    )
     classification = {
         "sif_potential": sif_potential,
         "confidence": calibrated_confidence,
@@ -417,12 +492,94 @@ def run_single(
         "model_version": model_ver,
     }
 
+    structured_reasoning = {
+        "activity": {
+            "text": act_data.get("text", "unspecified activity"),
+            "span": act_data.get("span"),
+            "confidence": act_data.get("confidence", 0.5),
+        },
+        "hazard": {
+            "best_category": best_hazard,
+            "matches": hazard_info.get("matches", {}),
+            "text": hazard_field.get("text") if hazard_field else None,
+            "span": hazard_field.get("span") if hazard_field else None,
+        },
+        "energy": {
+            "label": energy_classification.get("label", "unspecified energy"),
+            "is_high_energy": decision_factors.get("is_high_energy", False),
+            "source": energy_classification.get("high_energy_source", energy_classification.get("source", "fallback")),
+            "confidence": energy_classification.get("confidence", 0.7),
+            "high_energy_confidence": energy_classification.get("high_energy_confidence", 0.7),
+            "high_energy_evidence": energy_classification.get("high_energy_evidence", []),
+        },
+        "exposure": exposure_field,
+        "barrier": {
+            "status": reasoner_result.get("barrier_status", barrier_status),
+            "gap_severity": reasoner_result.get("barrier_gap_severity"),
+            "evidence": barrier_data.evidence if barrier_data and barrier_data.evidence else [],
+            "legacy_label": barrier_status,
+        },
+        "environment": environment_field,
+        "credible_consequence": reasoner_result.get("credible_consequence", {}),
+        "sif_potential": sif_potential,
+        "lsr": {
+            "rule": reasoner_result.get("lsr_tag", "unresolved"),
+            "reason": reasoner_result.get("credible_consequence", {}).get("description", "No ontology rule matched the current evidence."),
+            "confidence": 0.75 if reasoner_result.get("lsr_tag") not in [None, "N/A", "Other"] else 0.0,
+            "ontology_source": "rule_engine",
+        },
+        "missing_information": [],
+        "contradictions": reasoner_result.get("contradictions_detected", []),
+        "evidence": [
+            {"field": item["field"], "text": item["text"], "span": item["span"], "confidence": item.get("confidence", 0.8)}
+            for item in evidence_spans
+        ],
+        "reasoning_steps": [
+            {"step": 1, "label": "Activity", "detail": f"Activity identified: {act_data.get('text', 'unspecified activity')}"},
+            {"step": 2, "label": "Hazard / Energy", "detail": f"Energy: {energy_classification.get('label', 'unspecified energy')}"},
+            {"step": 3, "label": "Exposure", "detail": f"Exposure: {exposure_field.get('label', 'unspecified')}"},
+            {"step": 4, "label": "Barrier", "detail": f"Barrier: {reasoner_result.get('barrier_status', barrier_status)}"},
+            {"step": 5, "label": "Credible consequence", "detail": reasoner_result.get("credible_consequence", {}).get("primary_consequence", "No consequence mapped")},
+            {"step": 6, "label": "SIF potential", "detail": "SIF potential likely" if sif_potential else "No SIF pathway supported by current evidence"},
+            {"step": 7, "label": "LSR", "detail": reasoner_result.get("lsr_tag", "unresolved")},
+        ],
+        "provenance": {
+            "energy_source": energy_classification.get("high_energy_source", energy_classification.get("source", "fallback")),
+            "barrier_source": "raw_text_evidence",
+            "model_version": model_ver,
+            "source": "structured_reasoning_engine",
+        },
+        "confidence": calibrated_confidence,
+        "bucket": bucket,
+        "lsr_tag": reasoner_result["lsr_tag"],
+        "credible_consequence_legacy": reasoner_result.get("credible_consequence", {}),
+        "barrier_status": barrier_status,
+        "barrier_gap_severity": reasoner_result.get("barrier_gap_severity"),
+        "exposure_mode": exposure_field.get("label"),
+        "candidate_needs_info": candidate_needs_info,
+        "contradictions_detected": reasoner_result.get("contradictions_detected", []),
+        "audit_justification": reasoner_result["justification"],
+        "decision_factors": decision_factors,
+    }
+
     return {
         "report_id": report_id,
-        "site": resolved_site,
+        "site": resolved_canonical_site,
         "report_text": raw_text,
         "extracted_fields": extracted_fields,
         "classification": classification,
+        "reasoning": structured_reasoning,
+        "site_intelligence": {
+            "site_id": site_metadata["site_id"] if site_metadata else resolved_canonical_site.lower().replace(" ", "_"),
+            "canonical_name": resolved_canonical_site,
+            "region": site_metadata["region"] if site_metadata else "Upper Assam Basin",
+            "state": site_metadata["state"] if site_metadata else "Assam",
+            "facility_type": site_metadata["facility_type"] if site_metadata else "Operational Facility",
+            "latitude": site_metadata["latitude"] if site_metadata else 27.3587,
+            "longitude": site_metadata["longitude"] if site_metadata else 95.3197,
+            "is_synthetic_prototype": site_metadata.get("is_synthetic_prototype", True) if site_metadata else True,
+            "demonstration_notice": "SYNTHETIC DEMONSTRATION DATA" if (site_metadata and site_metadata.get("is_synthetic_prototype")) else "PUBLIC OIL ASSET",
+        },
         "preprocessed_text": preprocessed_text,
         "stage_metadata": {
             "stage0": stage0_meta,
@@ -430,6 +587,7 @@ def run_single(
             "decision_factors": decision_factors,
         },
     }
+
 
 
 def run_batch(
