@@ -28,7 +28,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-const PUBLIC_ROUTES = new Set(["/login"]);
+const PUBLIC_ROUTES = new Set(["/", "/login", "/signup"]);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<StoredSession | null>(null);
