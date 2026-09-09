@@ -1,290 +1,372 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Layers, Sparkles, Network, CheckCircle2, ChevronRight } from 'lucide-react';
-import { RiskBadge } from '../components/common/RiskBadge';
-import { ActionPlanModal } from '../components/common/ActionPlanModal';
-import { mockClusters, mockRecommendations, mockClusterNodes, mockClusterEdges } from '../data/mockData';
-import type { Recommendation, ClusterNode, ClusterEdge } from '../types/sentinel';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { GitBranch, Link2, TriangleAlert } from 'lucide-react';
+import {
+  Bar,
+  Chip,
+  Counter,
+  PanelHead,
+  PulseDot,
+  ScanPanel,
+  type Tone,
+} from '../components/kinetic';
+import { EmptyPanel, PanelLoading, QueryError } from '../components/common/QueryState';
+import { useAssociations, useClusters } from '../api/hooks';
+import type { ClusterItem } from '../api/types';
+import { cn } from '../lib/cn';
 
-export const PatternsPage: React.FC = () => {
-  const navigate = useNavigate();
-  const [selectedRec, setSelectedRec] = useState<Recommendation | null>(null);
-  const [actionPlanOpen, setActionPlanOpen] = useState(false);
-  const [actionCreated, setActionCreated] = useState(false);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+const PATTERN_TONE: Record<string, Tone> = {
+  established: 'high',
+  emerging: 'critical',
+  sporadic_high_severity: 'medium',
+};
 
-  const handleOpenIntervention = (patternId: string) => {
-    const found = mockRecommendations.find((r) => r.pattern_id === patternId) || mockRecommendations[0];
-    setSelectedRec(found);
-    setActionPlanOpen(true);
-  };
+const PATTERN_COPY: Record<string, string> = {
+  established: 'Recurring across the whole window',
+  emerging: 'Concentrated in the most recent weeks',
+  sporadic_high_severity: 'Rare, but high energy with no barrier',
+};
 
-  const selectedNode = mockClusterNodes.find((n) => n.id === selectedNodeId);
+/**
+ * Force-free cluster map.
+ *
+ * Deliberately not a physics simulation: clusters are laid out on a stable
+ * radial grid ordered by size, so the same corpus always produces the same
+ * picture. A jittering force graph looks impressive and makes it impossible to
+ * say "that cluster grew" between two runs.
+ */
+function ClusterMap({
+  clusters,
+  selected,
+  onSelect,
+}: {
+  clusters: ClusterItem[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const nodes = useMemo(() => {
+    const top = [...clusters].sort((a, b) => b.member_count - a.member_count).slice(0, 24);
+    const maxCount = Math.max(...top.map((c) => c.member_count), 1);
+    return top.map((c, i) => {
+      const ring = i < 1 ? 0 : i < 7 ? 1 : i < 15 ? 2 : 3;
+      const inRing = ring === 0 ? 1 : ring === 1 ? 6 : ring === 2 ? 8 : 9;
+      const idxInRing = ring === 0 ? 0 : ring === 1 ? i - 1 : ring === 2 ? i - 7 : i - 15;
+      const angle = (idxInRing / inRing) * Math.PI * 2 - Math.PI / 2;
+      const radius = ring * 26;
+      return {
+        cluster: c,
+        x: 50 + Math.cos(angle) * radius,
+        y: 50 + Math.sin(angle) * radius * 0.82,
+        r: 3 + (c.member_count / maxCount) * 9,
+      };
+    });
+  }, [clusters]);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-              <Layers className="w-5 h-5" />
-            </div>
-            <h2 className="text-xl font-black text-slate-100 uppercase tracking-tight font-telemetry">
-              Precursor Pattern Intelligence
-            </h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            NLP semantic clustering & precursor association network discovering recurring safety precursor patterns across observations.
-          </p>
-        </div>
+    <svg viewBox="0 0 100 100" className="h-full w-full" aria-label="Precursor cluster map">
+      {/* concentric guides */}
+      {[26, 52, 78].map((r) => (
+        <ellipse
+          key={r}
+          cx="50"
+          cy="50"
+          rx={r}
+          ry={r * 0.82}
+          fill="none"
+          stroke="var(--color-chart-grid)"
+          strokeWidth="0.2"
+          strokeDasharray="1 1.5"
+        />
+      ))}
 
-        <span className="text-xs font-telemetry font-bold text-purple-300 bg-purple-500/10 px-3 py-1.5 rounded-lg border border-purple-500/20 self-start sm:self-auto">
-          Semantic Clustering Engine Active
-        </span>
-      </div>
-
-      {actionCreated && (
-        <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-800 text-xs text-emerald-300 font-telemetry flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          Action Plan created and committed to outcome tracking module!
-        </div>
-      )}
-
-      {/* 1. SEMANTIC CLUSTERING DEMO CARD ("DIFFERENT WORDING -> SAME PATTERN") */}
-      <div className="bg-slate-900/90 border border-purple-500/30 rounded-xl p-5 shadow-2xl space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div>
-            <div className="flex items-center space-x-2">
-              <Sparkles className="w-4 h-4 text-purple-400" />
-              <h3 className="text-sm font-extrabold text-slate-100 uppercase tracking-wider font-telemetry">
-                Semantic Clustering Demonstration: Different Wording &rarr; Same Precursor Pattern
-              </h3>
-            </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Demonstrating how Sentinel groups differently worded field observations into a single structured safety precursor pattern.
-            </p>
-          </div>
-          <span className="text-[11px] font-telemetry text-purple-300 bg-purple-500/10 px-2.5 py-1 rounded border border-purple-500/20 font-bold">
-            Grouped by structured similarity
-          </span>
-        </div>
-
-        {/* Differently Worded Source Reports Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-telemetry text-xs">
-          <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
-            <div className="flex justify-between items-center text-[10px] text-slate-500">
-              <span className="font-bold text-blue-400">REPORT A (SR-10480)</span>
-              <span>Rig 4</span>
-            </div>
-            <p className="text-slate-300 font-mono text-[11px]">
-              "Worker stood below suspended pipe section."
-            </p>
-          </div>
-
-          <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
-            <div className="flex justify-between items-center text-[10px] text-slate-500">
-              <span className="font-bold text-blue-400">REPORT B (SR-10474)</span>
-              <span>North Refinery</span>
-            </div>
-            <p className="text-slate-300 font-mono text-[11px]">
-              "Person was positioned under lifted load."
-            </p>
-          </div>
-
-          <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5">
-            <div className="flex justify-between items-center text-[10px] text-slate-500">
-              <span className="font-bold text-blue-400">REPORT C (SR-10473)</span>
-              <span>Processing Unit 4</span>
-            </div>
-            <p className="text-slate-300 font-mono text-[11px]">
-              "Employee entered the crane load path."
-            </p>
-          </div>
-        </div>
-
-        {/* Sentinel Clustered Result Box */}
-        <div className="p-4 bg-purple-950/20 border-2 border-purple-500/40 rounded-xl space-y-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-telemetry text-slate-400 font-bold uppercase">
-                SENTINEL CLUSTERED THESE AS:
-              </span>
-              <h4 className="text-sm font-black text-purple-300 font-telemetry uppercase tracking-wider">
-                LINE-OF-FIRE / SUSPENDED LOAD PRECURSOR
-              </h4>
-            </div>
-            <div className="flex items-center space-x-3 text-xs font-telemetry">
-              <span>Occurrences: <strong className="text-slate-100 font-bold">27</strong></span>
-              <span>Sites: <strong className="text-blue-300 font-bold">4</strong></span>
-              <span>Trend: <strong className="text-red-400 font-bold">&uarr; 31%</strong></span>
-            </div>
-          </div>
-          <div className="text-xs text-slate-300 flex items-center justify-between pt-1 border-t border-purple-800/40">
-            <span>Primary Barrier: <strong className="text-amber-300">Exclusion Zone / Lifting Controls</strong></span>
-            <span className="text-[11px] text-slate-400 italic">
-              Grouped by structured safety-event similarity, not identical wording.
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. PRECURSOR GRAPH / NETWORK VIEW */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-2xl space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div>
-            <div className="flex items-center space-x-2">
-              <Network className="w-4 h-4 text-cyan-400" />
-              <h3 className="text-sm font-extrabold text-slate-100 uppercase tracking-wider font-telemetry">
-                Precursor Association Network Graph
-              </h3>
-            </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Graph representation showing explicit relationships between Activity &rarr; Energy &rarr; Barrier &rarr; Failure Mode &rarr; Site &rarr; LSR.
-            </p>
-          </div>
-          <span className="text-[11px] font-telemetry text-cyan-300 bg-cyan-500/10 px-2.5 py-1 rounded border border-cyan-500/20 font-bold">
-            Interactive Network Nodes
-          </span>
-        </div>
-
-        {/* Network Graph Visualizer */}
-        <div className="p-6 bg-slate-950 rounded-xl border border-slate-800 relative">
-          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {mockClusterNodes.map((node: ClusterNode) => {
-              const isSelected = selectedNodeId === node.id;
-              return (
-                <button
-                  key={node.id}
-                  onClick={() => setSelectedNodeId(node.id)}
-                  className={`p-3 rounded-lg border text-left transition-all font-telemetry cursor-pointer ${isSelected
-                      ? 'bg-cyan-950/60 border-cyan-400 ring-2 ring-cyan-500/30'
-                      : 'bg-slate-900 border-slate-800 hover:border-slate-600'
-                    }`}
-                >
-                  <div className="text-[10px] uppercase font-bold text-slate-500 mb-1">
-                    {node.type}
-                  </div>
-                  <div className="text-xs font-bold text-slate-100 line-clamp-2">
-                    {node.label}
-                  </div>
-                  <div className="mt-2 text-[10px] text-cyan-400 font-bold">
-                    {node.reportsCount} Reports
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Graph Edges / Relations List */}
-          <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-wrap items-center gap-3 text-xs font-telemetry text-slate-400">
-            <span className="font-bold text-slate-300">Extracted Association Edges:</span>
-            {mockClusterEdges.map((e: ClusterEdge, idx: number) => (
-              <span key={idx} className="bg-slate-900 px-2.5 py-1 rounded border border-slate-800 text-[11px]">
-                <strong className="text-cyan-300">{mockClusterNodes.find((n: ClusterNode) => n.id === e.source)?.label}</strong>
-                <span className="mx-1.5 text-slate-500">&rarr; [{e.relation}] &rarr;</span>
-                <strong className="text-amber-300">{mockClusterNodes.find((n: ClusterNode) => n.id === e.target)?.label}</strong>
-              </span>
-            ))}
-          </div>
-
-          {selectedNode && (
-            <div className="mt-3 p-3 bg-cyan-950/30 rounded-lg border border-cyan-500/30 text-xs text-cyan-200 flex items-center justify-between">
-              <span>
-                Filtered by node: <strong>{selectedNode.label}</strong> ({selectedNode.reportsCount} reports associated)
-              </span>
-              <button
-                onClick={() => setSelectedNodeId(null)}
-                className="text-cyan-400 hover:underline font-bold"
+      {nodes.map((n, i) => {
+        const tone = PATTERN_TONE[n.cluster.pattern_type] ?? 'hivis';
+        const isSel = selected === n.cluster.cluster_id;
+        return (
+          <g
+            key={n.cluster.cluster_id}
+            onClick={() => onSelect(n.cluster.cluster_id)}
+            className="cursor-pointer"
+          >
+            <motion.circle
+              cx={n.x}
+              cy={n.y}
+              initial={{ r: 0, opacity: 0 }}
+              animate={{ r: n.r, opacity: isSel ? 1 : 0.72 }}
+              transition={{ delay: i * 0.03, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              fill={`var(--color-${tone})`}
+              fillOpacity={isSel ? 0.35 : 0.16}
+              stroke={`var(--color-${tone})`}
+              strokeWidth={isSel ? 0.8 : 0.4}
+            />
+            {n.cluster.pattern_type === 'emerging' && (
+              <circle
+                cx={n.x}
+                cy={n.y}
+                r={n.r}
+                fill="none"
+                stroke="var(--color-critical)"
+                strokeWidth="0.3"
+                opacity="0.6"
               >
-                Reset Filter
-              </button>
+                <animate
+                  attributeName="r"
+                  values={`${n.r};${n.r * 1.8};${n.r}`}
+                  dur="2.4s"
+                  repeatCount="indefinite"
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0.6;0;0.6"
+                  dur="2.4s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+            )}
+            <text
+              x={n.x}
+              y={n.y + 0.9}
+              textAnchor="middle"
+              className="pointer-events-none"
+              style={{ fontSize: '2.4px', fill: 'var(--color-ink)', fontFamily: 'var(--font-mono)' }}
+            >
+              {n.cluster.member_count}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+export function PatternsPage() {
+  const { data, isLoading, error } = useClusters(undefined, 3);
+  const { data: assoc } = useAssociations(undefined, 12);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const clusters = data?.clusters ?? [];
+  const selectedCluster = clusters.find((c) => c.cluster_id === selected) ?? clusters[0];
+
+  const emerging = clusters.filter((c) => c.pattern_type === 'emerging');
+  const sporadic = clusters.filter((c) => c.pattern_type === 'sporadic_high_severity');
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="flex items-center gap-2">
+          <PulseDot tone="violet" size={6} />
+          <span className="font-mono text-2xs tracked text-ink-4">
+            REQUIREMENT (C) · PATTERN DISCOVERY
+          </span>
+        </div>
+        <h1 className="mt-1.5 font-display text-4xl text-ink">Precursor Patterns</h1>
+        <p className="mt-1.5 max-w-3xl text-sm text-ink-3">
+          Clustered over the <strong className="text-ink-2">structured event frame</strong>, not
+          raw text — so “stood under the load” and “was positioned beneath the suspended pipe
+          section” land in the same pattern despite sharing almost no vocabulary.
+        </p>
+      </div>
+
+      {/* Counters */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatBox label="CLUSTERS" value={clusters.length} tone="hivis" />
+        <StatBox label="EMERGING" value={emerging.length} tone="critical" />
+        <StatBox label="RARE & SEVERE" value={sporadic.length} tone="medium" />
+        <StatBox label="UNCLUSTERED" value={data?.noise_count ?? 0} tone="neutral" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+        {/* Map */}
+        <ScanPanel className="lg:col-span-3">
+          <PanelHead
+            title="CLUSTER MAP"
+            sub="Radius = report count · pulsing ring = emerging"
+            tone="violet"
+            right={
+              data?.computed_at ? (
+                <span className="font-mono text-2xs text-ink-4">
+                  batch {data.computed_at.slice(0, 16).replace('T', ' ')}
+                </span>
+              ) : undefined
+            }
+          />
+          <div className="h-[26rem] p-3">
+            {isLoading ? (
+              <PanelLoading rows={6} />
+            ) : error ? (
+              <QueryError error={error} />
+            ) : clusters.length === 0 ? (
+              <EmptyPanel
+                icon={GitBranch}
+                title="No clusters yet"
+                message="Press RECOMPUTE in the top bar to run the batch clustering job."
+              />
+            ) : (
+              <ClusterMap
+                clusters={clusters}
+                selected={selectedCluster?.cluster_id ?? null}
+                onSelect={setSelected}
+              />
+            )}
+          </div>
+        </ScanPanel>
+
+        {/* Selected cluster */}
+        <ScanPanel className="lg:col-span-2">
+          <PanelHead title="PATTERN DETAIL" tone="critical" />
+          {!selectedCluster ? (
+            <EmptyPanel title="Select a cluster" />
+          ) : (
+            <div className="space-y-3 p-4">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Chip tone={PATTERN_TONE[selectedCluster.pattern_type] ?? 'neutral'} dot>
+                  {selectedCluster.pattern_type.replace(/_/g, ' ').toUpperCase()}
+                </Chip>
+                <Chip tone="neutral">{selectedCluster.cluster_id}</Chip>
+              </div>
+
+              <p className="text-xs text-ink-4">
+                {PATTERN_COPY[selectedCluster.pattern_type]}
+              </p>
+
+              <div className="rounded-md border border-line bg-surface-2 p-3">
+                <div className="font-mono text-[9px] tracked text-ink-4">PATTERN SIGNATURE</div>
+                <div className="mt-1 text-sm leading-relaxed text-ink">
+                  {selectedCluster.pattern_summary}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <MiniStat label="REPORTS" value={selectedCluster.member_count} />
+                <MiniStat label="SITES" value={selectedCluster.site_count} />
+              </div>
+
+              <div>
+                <div className="flex justify-between font-mono text-2xs text-ink-4">
+                  <span>SIF SHARE</span>
+                  <span className="tabular text-ink-2">
+                    {(selectedCluster.sif_share * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <Bar value={selectedCluster.sif_share} tone="critical" className="mt-1" />
+              </div>
+
+              {selectedCluster.primary_barrier_failure && (
+                <div>
+                  <div className="font-mono text-[9px] tracked text-ink-4">
+                    DOMINANT BARRIER FAILURE
+                  </div>
+                  <div className="mt-0.5 text-sm text-high">
+                    {selectedCluster.primary_barrier_failure}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-1">
+                {selectedCluster.sites.slice(0, 8).map((s) => (
+                  <Chip key={s} tone="neutral">
+                    {s}
+                  </Chip>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between border-t border-line pt-3">
+                <span className="font-mono text-2xs text-ink-4">
+                  {selectedCluster.first_seen?.slice(0, 10)} →{' '}
+                  {selectedCluster.last_seen?.slice(0, 10)}
+                </span>
+                <Link
+                  to={`/recommendations?pattern=${selectedCluster.cluster_id}`}
+                  className="font-mono text-2xs tracked text-hivis hover:underline"
+                >
+                  INTERVENTIONS →
+                </Link>
+              </div>
             </div>
           )}
-        </div>
+        </ScanPanel>
       </div>
 
-      {/* 3. PRECURSOR PATTERN CARDS GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {mockClusters.map((cluster) => (
-          <div
-            key={cluster.cluster_id}
-            className="rounded-xl bg-slate-900/90 border border-slate-800 p-6 space-y-4 hover:border-purple-500/40 transition-all shadow-xl"
-          >
-            {/* Header row */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-extrabold font-telemetry text-purple-300 bg-purple-500/10 px-3 py-1 rounded border border-purple-500/30">
-                  CLUSTER #{cluster.cluster_id}
-                </span>
-                <span className="text-xs font-telemetry text-slate-400">
-                  {cluster.pattern_type.toUpperCase().replace('_', ' ')}
-                </span>
-              </div>
-              <RiskBadge level={cluster.risk_level} size="sm" />
-            </div>
-
-            {/* Title */}
-            <h3 className="text-base font-extrabold text-slate-100">
-              {cluster.pattern_summary}
-            </h3>
-
-            {/* Metrics */}
-            <div className="grid grid-cols-3 gap-3 p-3 rounded-lg bg-slate-950 border border-slate-800 font-telemetry text-xs">
-              <div>
-                <span className="text-slate-500 block text-[10px]">OCCURRENCES</span>
-                <span className="font-black text-slate-100 text-lg">{cluster.member_count}</span>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-[10px]">GROWTH RATE</span>
-                <span className="font-black text-red-400 text-lg">+{cluster.growth_rate}%</span>
-              </div>
-              <div>
-                <span className="text-slate-500 block text-[10px]">AFFECTED SITES</span>
-                <span className="font-bold text-blue-400 text-lg">{cluster.sites.length} sites</span>
-              </div>
-            </div>
-
-            {/* Why This Matters */}
-            <div className="space-y-1">
-              <span className="text-xs font-bold uppercase tracking-wider text-purple-400 font-telemetry flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" />
-                Why This Matters:
-              </span>
-              <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/80 p-3 rounded border border-slate-800">
-                {cluster.why_it_matters}
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
-              <button
-                onClick={() => navigate(`/reports/${cluster.member_report_ids[0]}`)}
-                className="text-xs text-blue-400 hover:underline font-telemetry flex items-center space-x-1"
-              >
-                <span>View Source Reports ({cluster.member_report_ids.length})</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => handleOpenIntervention(cluster.cluster_id)}
-                className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-telemetry text-xs font-bold transition-all shadow-md"
-              >
-                Create Intervention Plan
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Action Plan Modal */}
-      {selectedRec && (
-        <ActionPlanModal
-          isOpen={actionPlanOpen}
-          onClose={() => setActionPlanOpen(false)}
-          recommendation={selectedRec}
-          onSuccess={() => setActionCreated(true)}
+      {/* Association rules */}
+      <ScanPanel>
+        <PanelHead
+          title="CO-OCCURRENCE RULES"
+          sub="Combinations that are individually unremarkable but jointly dangerous"
+          tone="info"
+          right={<Chip tone="info">{assoc?.rules?.length ?? 0} RULES</Chip>}
         />
-      )}
+        {!assoc ? (
+          <PanelLoading rows={5} />
+        ) : assoc.rules.length === 0 ? (
+          <EmptyPanel icon={Link2} title="No rules above threshold" />
+        ) : (
+          <div className="divide-y divide-line-faint">
+            {assoc.rules.map((rule, i) => (
+              <motion.div
+                key={`${rule.antecedent_text}-${rule.consequent_text}`}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.04 }}
+                className="flex items-start gap-3 px-4 py-3"
+              >
+                <div
+                  className={cn(
+                    'mt-0.5 flex h-8 w-12 shrink-0 flex-col items-center justify-center rounded-sm border font-mono',
+                    rule.lift >= 3
+                      ? 'border-critical-edge bg-critical-wash text-critical'
+                      : rule.lift >= 2
+                        ? 'border-high-edge bg-high-wash text-high'
+                        : 'border-line-bright bg-surface-2 text-ink-2',
+                  )}
+                >
+                  <span className="text-xs tabular leading-none">{rule.lift.toFixed(1)}×</span>
+                  <span className="text-[8px] tracked leading-none opacity-70">LIFT</span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-ink-2">{rule.statement}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-2xs text-ink-4">
+                    <span>{rule.report_count} reports</span>
+                    <span>·</span>
+                    <span>confidence {(rule.confidence * 100).toFixed(0)}%</span>
+                    <span>·</span>
+                    <span>baseline {(rule.baseline * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+        <div className="flex items-start gap-2 border-t border-line px-4 py-2.5">
+          <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-medium" strokeWidth={2} />
+          <p className="text-2xs text-ink-4">{assoc?.note}</p>
+        </div>
+      </ScanPanel>
     </div>
   );
-};
+}
+
+function StatBox({ label, value, tone }: { label: string; value: number; tone: Tone }) {
+  return (
+    <ScanPanel className="p-3">
+      <div className="flex items-center gap-1.5">
+        <PulseDot tone={tone} size={5} live={tone === 'critical'} />
+        <span className="font-mono text-[9px] tracked text-ink-4">{label}</span>
+      </div>
+      <div className="mt-1 font-display text-3xl text-ink">
+        <Counter value={value} />
+      </div>
+    </ScanPanel>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-line bg-surface-2 px-2.5 py-2">
+      <div className="font-mono text-[9px] tracked text-ink-4">{label}</div>
+      <div className="font-mono text-lg tabular text-ink">{value}</div>
+    </div>
+  );
+}

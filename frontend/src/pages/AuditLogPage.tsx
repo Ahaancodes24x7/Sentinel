@@ -1,122 +1,73 @@
-import React from 'react';
-import { History, Lock } from 'lucide-react';
-import { DataTable } from '../components/common/DataTable';
-import type { Column } from '../components/common/DataTable';
-import { mockAuditLogs } from '../data/mockData';
-import type { AuditLogEntry } from '../types/sentinel';
+import { motion } from 'framer-motion';
+import { ScrollText } from 'lucide-react';
+import { Chip, PanelHead, PulseDot, ScanPanel, type Tone } from '../components/kinetic';
+import { EmptyPanel, PanelLoading, QueryError } from '../components/common/QueryState';
+import { useAuditLog } from '../api/hooks';
 
-export const AuditLogPage: React.FC = () => {
-  const columns: Column<AuditLogEntry>[] = [
-    {
-      header: 'Audit Hash ID',
-      accessorKey: 'id',
-      sortable: true,
-      cell: (row) => (
-        <span className="font-telemetry font-bold text-slate-300 bg-slate-950 px-2 py-0.5 rounded border border-slate-800 font-mono text-[11px]">
-          {row.id}
-        </span>
-      ),
-    },
-    {
-      header: 'Timestamp',
-      accessorKey: 'timestamp',
-      sortable: true,
-      cell: (row) => (
-        <span className="font-telemetry text-slate-400 text-[11px]">
-          {new Date(row.timestamp).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      header: 'Report ID',
-      accessorKey: 'entity_id',
-      sortable: true,
-      cell: (row) => (
-        <span className="font-telemetry font-bold text-blue-400">
-          {row.entity_id}
-        </span>
-      ),
-    },
-    {
-      header: 'Model Version',
-      accessorKey: 'model_version',
-      cell: (row) => (
-        <span className="font-telemetry text-purple-300 font-semibold text-xs">
-          {row.model_version || 'Sentinel-NLP v0.4'}
-        </span>
-      ),
-    },
-    {
-      header: 'SIF Classification & Confidence',
-      accessorKey: 'sif_classification',
-      cell: (row) => (
-        <div className="font-telemetry text-xs">
-          <span className="font-bold text-red-400">SIF: {row.sif_classification || 'HIGH'}</span>
-          <span className="text-emerald-400 font-bold ml-2">({Math.round((row.confidence || 0.94) * 100)}%)</span>
-        </div>
-      ),
-    },
-    {
-      header: 'LSR Mapping',
-      accessorKey: 'lsr_mapping',
-      cell: (row) => (
-        <span className="font-telemetry text-slate-300 font-medium text-xs">
-          {row.lsr_mapping || 'Working at Height'}
-        </span>
-      ),
-    },
-    {
-      header: 'Reviewer Action',
-      accessorKey: 'action',
-      sortable: true,
-      cell: (row) => (
-        <span className="font-telemetry font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 text-xs">
-          {row.action}
-        </span>
-      ),
-    },
-    {
-      header: 'Actor / User',
-      accessorKey: 'actor',
-      sortable: true,
-      cell: (row) => (
-        <span className="font-telemetry text-slate-300 text-xs">
-          {row.actor}
-        </span>
-      ),
-    },
-  ];
+const ACTION_TONE: Record<string, Tone> = {
+  confirm: 'low',
+  correct: 'medium',
+  reject: 'critical',
+  recompute_clusters: 'info',
+};
+
+export function AuditLogPage() {
+  const { data, isLoading, error } = useAuditLog(80);
+  const items = data?.items ?? [];
 
   return (
-    <div className="space-y-6 font-telemetry">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800 font-sans">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              <History className="w-5 h-5" />
-            </div>
-            <h2 className="text-xl font-black text-slate-100 uppercase tracking-tight font-telemetry">
-              Immutable Governance Audit Trail
-            </h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Tamper-evident log recording all automated NLP classifications, LSR mappings, and human HSE reviewer actions.
-          </p>
+    <div className="space-y-4">
+      <div>
+        <div className="flex items-center gap-2">
+          <PulseDot tone="info" size={6} />
+          <span className="font-mono text-2xs tracked text-ink-4">APPEND-ONLY TRAIL</span>
         </div>
-
-        <span className="text-xs font-telemetry font-bold text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20 flex items-center gap-1.5">
-          <Lock className="w-3.5 h-3.5" />
-          Cryptographic Audit Enabled
-        </span>
+        <h1 className="mt-1.5 font-display text-4xl text-ink">Audit Trail</h1>
+        <p className="mt-1.5 max-w-3xl text-sm text-ink-3">
+          Every automated classification and every human action is recorded with actor and
+          timestamp. There is no update path in the schema — entries can only be appended.
+        </p>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={mockAuditLogs}
-        searchPlaceholder="Search audit records by report ID, model version, actor..."
-        pageSize={10}
-      />
+      <ScanPanel>
+        <PanelHead
+          title="EVENT LOG"
+          right={<Chip tone="neutral">{data?.total ?? 0} ENTRIES</Chip>}
+        />
+        {isLoading ? (
+          <PanelLoading rows={10} />
+        ) : error ? (
+          <QueryError error={error} />
+        ) : items.length === 0 ? (
+          <EmptyPanel
+            icon={ScrollText}
+            title="No audit entries yet"
+            message="Actions taken in the review queue appear here immediately."
+          />
+        ) : (
+          <div className="divide-y divide-line-faint font-mono">
+            {items.map((entry, i) => (
+              <motion.div
+                key={entry.id}
+                initial={{ opacity: 0, x: -6 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: Math.min(i * 0.015, 0.3) }}
+                className="flex flex-wrap items-center gap-3 px-4 py-2 text-2xs"
+              >
+                <span className="tabular text-ink-4">
+                  {entry.timestamp?.slice(0, 19).replace('T', ' ')}
+                </span>
+                <Chip tone={ACTION_TONE[entry.action] ?? 'neutral'}>
+                  {entry.action.toUpperCase()}
+                </Chip>
+                <span className="text-ink-2">{entry.entity_type}</span>
+                <span className="text-ink">{entry.entity_id}</span>
+                <span className="ml-auto text-ink-3">{entry.actor}</span>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </ScanPanel>
     </div>
   );
-};
+}

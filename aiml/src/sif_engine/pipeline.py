@@ -288,6 +288,20 @@ def run_single(
     extracted_loc = evidence.get("location", {})
     resolved_site = extracted_loc.get("value") or site
 
+    # A report filed through the console carries its site as structured metadata,
+    # not in the prose, so span extraction correctly finds nothing. Feed the
+    # caller-supplied site back into the evidence so the justification reads
+    # "at Rig 7" instead of "at unspecified site" - while leaving `span` as None,
+    # because there is genuinely no text to highlight.
+    if not extracted_loc.get("value") and site:
+        evidence["location"] = {
+            **extracted_loc,
+            "value": site,
+            "span": None,
+            "confidence": 0.99,
+            "source": "caller_metadata",
+        }
+
     # Extract contextual safety environment (17 categories, exact raw spans, negation-aware)
     from sif_engine.extraction.environment_extractor import extract_environment
     from sif_engine.site_intelligence.site_registry import normalize_site_name, get_site_by_id
@@ -404,7 +418,12 @@ def run_single(
     location_field = None
     if extracted_loc.get("value"):
         location_field = {
-            "text": extracted_loc["value"],
+            # The literal slice `span` covers ("Moran field"), so that
+            # raw_text[span] == text always holds. The frontend draws its
+            # highlights straight from these offsets, so a canonical name here
+            # would highlight the wrong characters.
+            "text": extracted_loc.get("text") or extracted_loc["value"],
+            "canonical_name": extracted_loc.get("canonical_name") or extracted_loc["value"],
             "span": extracted_loc["span"],
             "confidence": extracted_loc.get("confidence", 0.95),
         }
@@ -455,7 +474,8 @@ def run_single(
     if extracted_loc.get("value"):
         evidence_spans.append({
             "field": "location",
-            "text": extracted_loc["value"],
+            # raw slice, so raw_text[span] == text holds for every evidence span
+            "text": extracted_loc.get("text") or extracted_loc["value"],
             "span": extracted_loc["span"],
             "confidence": extracted_loc.get("confidence", 0.95),
         })
@@ -481,7 +501,7 @@ def run_single(
 
     model_ver = energy_classification.get(
         "model_version",
-        "rule-fallback-v0.1" if energy_classification.get("source") == "fallback" else "baseline2-v0.3",
+        "rule-fallback-v0.1" if energy_classification.get("source") == "fallback" else "sentinel-v2.0",
     )
     classification = {
         "sif_potential": sif_potential,

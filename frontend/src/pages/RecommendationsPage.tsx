@@ -1,191 +1,245 @@
-import React, { useState } from 'react';
-import { Lightbulb } from 'lucide-react';
-import { RiskBadge } from '../components/common/RiskBadge';
-import { ActionPlanModal } from '../components/common/ActionPlanModal';
-import { mockRecommendations } from '../data/mockData';
-import type { Recommendation } from '../types/sentinel';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { Hammer, ListChecks, ShieldCheck, TriangleAlert, Wrench } from 'lucide-react';
+import { Bar, Chip, Counter, PanelHead, PulseDot, ScanPanel, type Tone } from '../components/kinetic';
+import { EmptyPanel, PanelLoading, QueryError } from '../components/common/QueryState';
+import { useRecommendation, useRecommendations } from '../api/hooks';
+import { cn } from '../lib/cn';
 
-export const RecommendationsPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'recommended' | 'assigned' | 'in_progress' | 'completed'>('recommended');
-  const [selectedRec, setSelectedRec] = useState<Recommendation | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [recommendations, setRecommendations] = useState(mockRecommendations);
+const PRIORITY_TONE: Record<string, Tone> = {
+  HIGH: 'critical',
+  MEDIUM: 'high',
+  LOW: 'low',
+};
 
-  const filteredRecs = recommendations.filter((r) => r.status === activeTab);
+/** Hierarchy of controls — the ordering is the point, so it is shown. */
+const CONTROL_META: Record<string, { rank: number; tone: Tone; icon: typeof Wrench }> = {
+  elimination: { rank: 1, tone: 'low', icon: ShieldCheck },
+  substitution: { rank: 2, tone: 'low', icon: ShieldCheck },
+  engineering: { rank: 3, tone: 'hivis', icon: Wrench },
+  administrative: { rank: 4, tone: 'medium', icon: ListChecks },
+  training: { rank: 5, tone: 'high', icon: Hammer },
+  ppe: { rank: 6, tone: 'critical', icon: Hammer },
+};
 
-  const handleAction = (patternId: string, newStatus: 'assigned' | 'in_progress' | 'completed') => {
-    setRecommendations((prev) =>
-      prev.map((r) => (r.pattern_id === patternId ? { ...r, status: newStatus } : r))
-    );
-  };
+export function RecommendationsPage() {
+  const [params, setParams] = useSearchParams();
+  const { data, isLoading, error } = useRecommendations();
+  const recs = data?.recommendations ?? [];
+
+  const [selected, setSelected] = useState<string | null>(params.get('pattern'));
+  useEffect(() => {
+    if (!selected && recs.length) setSelected(recs[0].pattern_id);
+  }, [recs, selected]);
+
+  const { data: detail, isLoading: detailLoading } = useRecommendation(selected ?? undefined);
+
+  function choose(id: string) {
+    setSelected(id);
+    setParams({ pattern: id });
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              <Lightbulb className="w-5 h-5" />
-            </div>
-            <h2 className="text-xl font-black text-slate-100 uppercase tracking-tight font-telemetry">
-              AI Recommended Interventions
-            </h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Targeted safety actions recommended by Sentinel AI to mitigate high-priority precursor patterns.
-          </p>
+    <div className="space-y-4">
+      <div>
+        <div className="flex items-center gap-2">
+          <PulseDot tone="hivis" size={6} />
+          <span className="font-mono text-2xs tracked text-ink-4">INTERVENTION ENGINE</span>
         </div>
-
-        <span className="text-xs font-telemetry font-bold text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20">
-          Intervention Engine v1.2
-        </span>
+        <h1 className="mt-1.5 font-display text-4xl text-ink">Interventions</h1>
+        <p className="mt-1.5 max-w-3xl text-sm text-ink-3">
+          Controls are looked up from a curated, version-controlled library and ranked by the
+          hierarchy of controls. Nothing here is generated text — these decide where budget goes,
+          so they have to be reviewable and identical between runs.
+        </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-        {(['recommended', 'assigned', 'in_progress', 'completed'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded-lg text-xs font-bold font-telemetry uppercase transition-all ${activeTab === tab
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-          >
-            {tab.replace('_', ' ')} (
-            {recommendations.filter((r) => r.status === tab).length})
-          </button>
-        ))}
-      </div>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+        {/* Pattern list */}
+        <ScanPanel className="lg:col-span-2">
+          <PanelHead
+            title="RANKED PATTERNS"
+            sub="Priority from evidence weight, not a tuned score"
+            right={<Chip tone="neutral">{recs.length}</Chip>}
+          />
+          {isLoading ? (
+            <PanelLoading rows={6} />
+          ) : error ? (
+            <QueryError error={error} />
+          ) : recs.length === 0 ? (
+            <EmptyPanel
+              title="No patterns detected"
+              message="Run RECOMPUTE in the top bar after ingesting reports."
+            />
+          ) : (
+            <div className="max-h-[34rem] divide-y divide-line-faint overflow-y-auto">
+              {recs.map((rec, i) => (
+                <motion.button
+                  key={rec.pattern_id}
+                  type="button"
+                  onClick={() => choose(rec.pattern_id)}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                  className={cn(
+                    'block w-full px-4 py-3 text-left transition-colors',
+                    selected === rec.pattern_id
+                      ? 'bg-hivis-wash'
+                      : 'hover:bg-surface-2',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <Chip tone={PRIORITY_TONE[rec.priority] ?? 'neutral'} dot>
+                      {rec.priority}
+                    </Chip>
+                    <span className="truncate text-sm text-ink">{rec.title}</span>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-ink-3">{rec.primary_barrier_failure}</p>
+                  <div className="mt-1 font-mono text-2xs text-ink-4">
+                    {rec.evidence_summary.report_count} reports ·{' '}
+                    {rec.evidence_summary.site_count} sites ·{' '}
+                    {rec.evidence_summary.window_days}d
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          )}
+        </ScanPanel>
 
-      {/* Recommendation Cards List */}
-      <div className="space-y-4">
-        {filteredRecs.length > 0 ? (
-          filteredRecs.map((rec) => (
-            <div
-              key={rec.pattern_id}
-              className="rounded-xl bg-slate-900/90 border border-slate-800 p-6 space-y-4 shadow-xl hover:border-slate-700 transition-all"
-            >
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-3">
-                  <RiskBadge level={rec.priority} size="sm" />
-                  <span className="text-xs font-bold font-telemetry text-purple-300 bg-purple-500/10 px-2.5 py-0.5 rounded border border-purple-500/20">
-                    Pattern #{rec.pattern_id}
-                  </span>
-                  <span className="text-xs font-telemetry text-slate-400">
-                    Owner: <strong className="text-slate-200">{rec.owner}</strong>
-                  </span>
+        {/* Detail */}
+        <div className="space-y-3 lg:col-span-3">
+          {detailLoading ? (
+            <ScanPanel>
+              <PanelLoading rows={8} />
+            </ScanPanel>
+          ) : !detail ? (
+            <ScanPanel>
+              <EmptyPanel title="Select a pattern" />
+            </ScanPanel>
+          ) : (
+            <>
+              <ScanPanel>
+                <PanelHead title="EVIDENCE TRAIL" sub={detail.title} tone="critical" />
+                <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+                  <Metric label="REPORTS" value={detail.evidence.report_count} />
+                  <Metric label="SITES" value={detail.evidence.site_count} />
+                  <Metric label="WINDOW (DAYS)" value={detail.evidence.window_days} />
+                  <Metric
+                    label="INTERVENTIONS"
+                    value={detail.recommended_interventions.length}
+                  />
                 </div>
-                <div className="text-xs font-telemetry text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-1 rounded border border-emerald-500/20">
-                  Confidence: {rec.confidence}%
+
+                {/* Breakdown — counts only, never causal language */}
+                <div className="border-t border-line px-4 py-3">
+                  <div className="font-mono text-[9px] tracked text-ink-4">
+                    WHAT THE REPORTS SAY
+                  </div>
+                  <div className="mt-2 space-y-1.5">
+                    {Object.entries(detail.evidence.breakdown)
+                      .filter(([k]) => !k.startsWith('failure_mode::'))
+                      .slice(0, 6)
+                      .map(([key, count]) => {
+                        const share = detail.evidence.report_count
+                          ? count / detail.evidence.report_count
+                          : 0;
+                        return (
+                          <div key={key}>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-ink-2">{key.replace(/_/g, ' ')}</span>
+                              <span className="font-mono tabular text-ink-3">
+                                {count}/{detail.evidence.report_count}
+                              </span>
+                            </div>
+                            <Bar
+                              value={share}
+                              tone={share > 0.6 ? 'critical' : share > 0.3 ? 'high' : 'medium'}
+                              height={3}
+                              className="mt-1"
+                            />
+                          </div>
+                        );
+                      })}
+                  </div>
                 </div>
-              </div>
 
-              <h3 className="text-base font-extrabold text-slate-100">
-                {rec.title}
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-sans">
-                <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="font-bold text-slate-400 uppercase font-telemetry block text-[10px]">
-                    Reason & Evidence Basis:
-                  </span>
-                  <p className="text-slate-200">{rec.reason}</p>
-                </div>
-
-                <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="font-bold text-slate-400 uppercase font-telemetry block text-[10px]">
-                    Expected Objective & Impact:
-                  </span>
-                  <p className="text-slate-200">{rec.impact}</p>
-                </div>
-              </div>
-
-              {/* Recommended Interventions Checklist */}
-              <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-400 uppercase font-telemetry">
-                  Prioritized Action Items:
-                </span>
-                <div className="space-y-1.5 text-xs font-sans">
-                  {rec.recommended_interventions.map((item) => (
-                    <div
-                      key={item.rank}
-                      className="p-2.5 rounded bg-slate-950/80 border border-slate-800/80 flex items-center justify-between"
-                    >
-                      <span className="text-slate-200">
-                        <strong className="font-telemetry text-purple-300 mr-2">
-                          #{item.rank} [{item.control_level.toUpperCase()}]
-                        </strong>
-                        {item.action}
-                      </span>
-                      <RiskBadge level={item.priority} size="sm" />
-                    </div>
+                <div className="flex flex-wrap gap-1 border-t border-line px-4 py-3">
+                  {detail.evidence.sites.map((s) => (
+                    <Chip key={s} tone="neutral">
+                      {s}
+                    </Chip>
                   ))}
                 </div>
-              </div>
+              </ScanPanel>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-3 border-t border-slate-800">
-                <span className="text-xs text-slate-500 font-telemetry">
-                  Target Sites: {rec.target_sites.join(', ')}
-                </span>
-
-                <div className="flex items-center gap-2 font-telemetry">
-                  {rec.status === 'recommended' && (
-                    <>
-                      <button
-                        onClick={() => handleAction(rec.pattern_id, 'assigned')}
-                        className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md transition-all"
+              <ScanPanel>
+                <PanelHead
+                  title="RECOMMENDED CONTROLS"
+                  sub="Ordered by hierarchy of controls — engineering above administrative above training"
+                  tone="hivis"
+                />
+                <div className="divide-y divide-line-faint">
+                  {detail.recommended_interventions.map((iv, i) => {
+                    const meta = CONTROL_META[iv.control_level] ?? CONTROL_META.administrative;
+                    const Icon = meta.icon;
+                    return (
+                      <motion.div
+                        key={iv.rank}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.06 }}
+                        className="flex items-start gap-3 px-4 py-3"
                       >
-                        Assign to HSE Team
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedRec(rec);
-                          setModalOpen(true);
-                        }}
-                        className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md transition-all"
-                      >
-                        Approve & Deploy Action Plan
-                      </button>
-                    </>
-                  )}
-                  {rec.status === 'assigned' && (
-                    <button
-                      onClick={() => handleAction(rec.pattern_id, 'in_progress')}
-                      className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs"
-                    >
-                      Start Implementation
-                    </button>
-                  )}
-                  {rec.status === 'in_progress' && (
-                    <button
-                      onClick={() => handleAction(rec.pattern_id, 'completed')}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
-                    >
-                      Mark Completed
-                    </button>
-                  )}
+                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-bright bg-surface-2 font-mono text-2xs text-hivis">
+                          {iv.rank}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-ink">{iv.action}</p>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <Chip tone={meta.tone}>
+                              <Icon className="h-2.5 w-2.5" />
+                              {iv.control_level.toUpperCase()}
+                            </Chip>
+                            <Chip tone={PRIORITY_TONE[iv.priority] ?? 'neutral'}>
+                              {iv.priority}
+                            </Chip>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </div>
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="p-8 rounded-lg bg-slate-900 border border-slate-800 text-center text-slate-500 font-telemetry">
-            No interventions currently in <strong className="text-slate-300">{activeTab}</strong> status.
-          </div>
-        )}
-      </div>
 
-      <ActionPlanModal
-        recommendation={selectedRec}
-        isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSuccess={() => {
-          if (selectedRec) handleAction(selectedRec.pattern_id, 'in_progress');
-        }}
-      />
+                <div className="space-y-2 border-t border-line px-4 py-3">
+                  <div>
+                    <div className="font-mono text-[9px] tracked text-ink-4">OBJECTIVE</div>
+                    <p className="mt-0.5 text-sm text-ink-2">{detail.expected_objective}</p>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-md border border-medium-edge bg-medium-wash px-3 py-2">
+                    <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-medium" strokeWidth={2} />
+                    <p className="text-2xs text-ink-2">
+                      Evidence shown is co-occurrence in reported observations, not a demonstrated
+                      causal relationship. No effectiveness claim is made for any control.
+                    </p>
+                  </div>
+                </div>
+              </ScanPanel>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
-};
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="font-mono text-[9px] tracked text-ink-4">{label}</div>
+      <div className="font-display text-2xl text-ink">
+        <Counter value={value} />
+      </div>
+    </div>
+  );
+}

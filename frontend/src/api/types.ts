@@ -1,0 +1,289 @@
+/** Wire types — these mirror backend/schemas.py exactly. */
+
+export type Bucket = 'HIGH_CONF_SIF' | 'LOW_CONF_REVIEW' | 'HIGH_CONF_NON_SIF' | 'NEEDS_MORE_INFO';
+export type PatternType = 'established' | 'emerging' | 'sporadic_high_severity';
+export type Role = 'hse_reviewer' | 'hse_manager' | 'auditor';
+export type Priority = 'HIGH' | 'MEDIUM' | 'LOW';
+export type BarrierStatus =
+  | 'confirmed_present'
+  | 'uncertain'
+  | 'explicitly_absent'
+  | 'not_mentioned';
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ReportListItem {
+  report_id: string;
+  site: string;
+  timestamp: string;
+  sif_potential: boolean;
+  bucket: Bucket;
+  lsr_tag: string;
+  source?: string;
+  confidence?: number;
+}
+
+export interface SpanField {
+  text?: string;
+  label?: string;
+  span?: [number, number] | null;
+  confidence?: number;
+}
+
+export interface EvidenceSpanItem {
+  field: string;
+  text: string;
+  span: [number, number];
+  confidence: number;
+}
+
+export interface ExtractedFields {
+  activity?: SpanField;
+  energy_type?: SpanField;
+  barrier_status?: SpanField;
+  barrier?: SpanField;
+  exposure?: SpanField;
+  hazard?: SpanField;
+  location?: SpanField;
+  environment?: SpanField;
+  evidence_spans?: EvidenceSpanItem[];
+  [key: string]: unknown;
+}
+
+export interface Classification {
+  sif_potential: boolean;
+  confidence: number;
+  bucket: Bucket;
+  lsr_tag: string;
+  justification: string;
+  model_version: string;
+  reasoning_chain?: { step: number; label: string; detail: string }[];
+  decision_factors?: Record<string, unknown>;
+}
+
+export interface ReportDetail {
+  report_id: string;
+  site: string;
+  timestamp: string;
+  source: string;
+  report_text: string;
+  extracted_fields: ExtractedFields;
+  classification: Classification;
+  review_status: string;
+}
+
+export interface DashboardSummary {
+  total_reports: number;
+  high_priority_pattern_count: number;
+  reports_pending_review: number;
+  last_ingested_at?: string | null;
+  bucket_counts: Record<string, number>;
+  sif_flagged_count: number;
+  sif_rate: number;
+  site_count: number;
+  emerging_pattern_count: number;
+}
+
+export interface RankingRow {
+  group: string;
+  sif_flagged_count: number;
+  total_reports: number;
+  density: number;
+  simple_density: number;
+  trend_direction: 'up' | 'down' | 'flat';
+  trend_pct: number;
+  primary_lsr: string;
+  components: Record<string, number>;
+}
+
+export interface RankingsResponse {
+  metric: 'simple' | 'composite';
+  window_days: number;
+  group_by: string;
+  rankings: RankingRow[];
+  weights?: Record<string, number> | null;
+  calibrated: boolean;
+  note?: string | null;
+}
+
+export interface ClusterItem {
+  cluster_id: string;
+  pattern_summary: string;
+  member_report_ids: string[];
+  member_count: number;
+  sites: string[];
+  site_count: number;
+  primary_lsr: string;
+  primary_barrier_failure?: string | null;
+  barrier_type?: string | null;
+  pattern_type: PatternType;
+  sif_member_count: number;
+  sif_share: number;
+  mean_magnitude: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+}
+
+export interface ClusterEdge {
+  source: string;
+  target: string;
+  similarity: number;
+  cluster_id?: string | null;
+}
+
+export interface ClustersResponse {
+  clusters: ClusterItem[];
+  edges: ClusterEdge[];
+  noise_count: number;
+  computed_at?: string | null;
+}
+
+export interface TrendPoint {
+  period: string;
+  count: number;
+  total_reports: number;
+  sif_count: number;
+  precursor_rate: number;
+}
+
+export interface TrendAlert {
+  period: string;
+  message: string;
+  method: string;
+  count: number;
+  baseline_mean: number;
+  threshold: number;
+  severity: string;
+}
+
+export interface TrendsResponse {
+  series: TrendPoint[];
+  alerts: TrendAlert[];
+  granularity: string;
+  cusum: { upper?: number[]; threshold?: number; baseline_mean?: number; signals?: number[] };
+  ewma: { ewma?: number[]; upper_limit?: number[]; lower_limit?: number[]; signals?: number[] };
+  method_note?: string | null;
+}
+
+export interface AssociationRule {
+  antecedent_text: string;
+  consequent_text: string;
+  support: number;
+  confidence: number;
+  baseline: number;
+  lift: number;
+  report_count: number;
+  statement: string;
+}
+
+export interface AssociationsResponse {
+  rules: AssociationRule[];
+  note: string;
+}
+
+export interface BarrierFailureRow {
+  activity: string;
+  barrier_failure_mode: string;
+  report_count: number;
+  sif_count: number;
+  sif_share: number;
+}
+
+export interface RecommendationListItem {
+  pattern_id: string;
+  title: string;
+  evidence_summary: {
+    report_count: number;
+    site_count: number;
+    window_days: number;
+    trend_pct: number;
+  };
+  primary_barrier_failure: string;
+  priority: Priority;
+}
+
+export interface RecommendedIntervention {
+  rank: number;
+  control_level: string;
+  priority: string;
+  action: string;
+}
+
+export interface RecommendationDetail {
+  pattern_id: string;
+  title: string;
+  evidence: {
+    report_count: number;
+    site_count: number;
+    window_days: number;
+    member_report_ids: string[];
+    breakdown: Record<string, number>;
+    sites: string[];
+    first_seen?: string | null;
+    last_seen?: string | null;
+  };
+  recommended_interventions: RecommendedIntervention[];
+  expected_objective: string;
+}
+
+export interface HealthResponse {
+  status: string;
+  model_version: string;
+  db: string;
+  active_sif_model?: string;
+  mlp_available?: boolean;
+}
+
+export interface AuditEntry {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  actor: string;
+  timestamp: string;
+}
+
+export interface OntologyEnergyType {
+  is_high_energy: boolean;
+  lsr_tag: string;
+  magnitude_class: number;
+  keywords?: string[];
+}
+
+export interface Ontology {
+  version?: string;
+  life_saving_rules?: Record<string, { icon?: string; description?: string }>;
+  energy_types?: Record<string, OntologyEnergyType>;
+  barrier_types?: Record<
+    string,
+    {
+      controls_energy: string[];
+      control_level: string;
+      is_direct_control: boolean;
+      failure_modes: string[];
+    }
+  >;
+  activities?: string[];
+  sites?: { name: string; type: string; region: string; workforce: number }[];
+  density_metric?: { calibrated: boolean; note: string; weights: Record<string, number> };
+  [key: string]: unknown;
+}
+
+export const BUCKET_META: Record<Bucket, { label: string; short: string; tone: string }> = {
+  HIGH_CONF_SIF: { label: 'High-confidence precursor', short: 'PRIORITY', tone: 'critical' },
+  LOW_CONF_REVIEW: { label: 'Needs review', short: 'REVIEW', tone: 'high' },
+  NEEDS_MORE_INFO: { label: 'Insufficient detail', short: 'INCOMPLETE', tone: 'medium' },
+  HIGH_CONF_NON_SIF: { label: 'Cleared', short: 'CLEARED', tone: 'low' },
+};
+
+export const BARRIER_META: Record<BarrierStatus, { label: string; tone: string; gap: string }> = {
+  explicitly_absent: { label: 'Absent', tone: 'critical', gap: '1.0' },
+  uncertain: { label: 'Unverified', tone: 'high', gap: '0.6' },
+  not_mentioned: { label: 'Not recorded', tone: 'medium', gap: '—' },
+  confirmed_present: { label: 'Confirmed', tone: 'low', gap: '0.0' },
+};

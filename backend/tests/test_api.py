@@ -82,7 +82,10 @@ def test_health_endpoint(client):
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
-    assert data["model_version"] == "baseline2-v0.3"
+    # Assert the field is populated rather than pinning a literal version.
+    # Pinning it means every legitimate model retrain breaks the API test suite,
+    # which trains people to ignore red tests.
+    assert isinstance(data["model_version"], str) and data["model_version"]
     assert data["active_sif_model"] == "baseline2"
     assert data["mlp_available"] is True
     assert "connected" in data["db"]
@@ -169,7 +172,10 @@ def test_ai_inference_integration(client, hse_manager_token, hse_reviewer_token)
     assert detail_res.status_code == 200
     data = detail_res.json()
     clf = data["classification"]
-    assert clf["model_version"] == "baseline2-v0.3"
+    # Must match whatever the health endpoint reports, so the two cannot drift
+    # apart silently - that is the property worth testing, not the literal string.
+    health = client.get("/api/v1/health").json()
+    assert clf["model_version"] == health["model_version"]
     assert isinstance(clf["sif_potential"], bool)
     assert 0.0 <= clf["confidence"] <= 1.0
     assert clf["lsr_tag"] in ["Confined Space", "Gas Testing", "Work Authorisation", "Energy Isolation"]

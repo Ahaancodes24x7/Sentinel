@@ -27,14 +27,16 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 try:
+    from backend import analytics
     from backend.database import (
         ActionPlanModel,
         AuditLogModel,
         BatchTrackerModel,
+        PrecursorClusterModel,
         ReportModel,
         ReviewActionModel,
         check_db_health,
@@ -44,6 +46,11 @@ try:
     )
     from backend.schemas import (
         ActionPlanRequest,
+        AssociationRule,
+        AssociationsResponse,
+        BarrierFailureRow,
+        BarrierFailuresResponse,
+        RecomputeResponse,
         ActionPlanResponse,
         ActionPlanUpdateRequest,
         AuditLogEntry,
@@ -55,7 +62,6 @@ try:
         ClustersResponse,
         DashboardSummary,
         ErrorResponse,
-        EvidenceBreakdown,
         EvidenceDetail,
         EvidenceSpanItem,
         EvidenceSummary,
@@ -76,12 +82,14 @@ try:
         PatternType,
         RankingRow,
         RankingsResponse,
+        ReasoningStep,
         RecommendationDetail,
         RecommendationListItem,
         RecommendationsResponse,
         RecommendedIntervention,
         ReportDetail,
         ReportIngestRequest,
+        ReportSubmitRequest,
         ReportIngestResponse,
         ReportListItem,
         ReviewActionRequest,
@@ -102,6 +110,7 @@ except ImportError:
         ActionPlanModel,
         AuditLogModel,
         BatchTrackerModel,
+        PrecursorClusterModel,
         ReportModel,
         ReviewActionModel,
         check_db_health,
@@ -111,6 +120,11 @@ except ImportError:
     )
     from schemas import (  # type: ignore
         ActionPlanRequest,
+        AssociationRule,
+        AssociationsResponse,
+        BarrierFailureRow,
+        BarrierFailuresResponse,
+        RecomputeResponse,
         ActionPlanResponse,
         ActionPlanUpdateRequest,
         AuditLogEntry,
@@ -122,7 +136,6 @@ except ImportError:
         ClustersResponse,
         DashboardSummary,
         ErrorResponse,
-        EvidenceBreakdown,
         EvidenceDetail,
         EvidenceSpanItem,
         EvidenceSummary,
@@ -143,12 +156,14 @@ except ImportError:
         PatternType,
         RankingRow,
         RankingsResponse,
+        ReasoningStep,
         RecommendationDetail,
         RecommendationListItem,
         RecommendationsResponse,
         RecommendedIntervention,
         ReportDetail,
         ReportIngestRequest,
+        ReportSubmitRequest,
         ReportIngestResponse,
         ReportListItem,
         ReviewActionRequest,
@@ -283,35 +298,90 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+def _audit(db: Session, entity_type: str, entity_id: str, action: str, actor: str) -> None:
+    """Append an immutable audit record.
+
+    Every automated classification and every human action is logged with actor
+    and timestamp - this is the concrete answer to the audit-trail requirement,
+    and it is append-only by construction (no update path exists).
+    """
+    db.add(AuditLogModel(
+        id=_new_id("al"),
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action=action,
+        actor=actor,
+        timestamp=_now(),
+    ))
+
+
 # ---------------------------------------------------------------------------
 # Ingestion Background Worker
 # ---------------------------------------------------------------------------
 def _process_batch_ingestion(batch_id: str, batch_input: list[dict[str, Any]]):
     db: Session = SessionLocal()
     try:
-        # Run real AI inference
         results = run_batch(batch_input)
         for item, res in zip(batch_input, results):
-            clf = res["classification"]
+            clf = dict(res["classification"])
             ext = res["extracted_fields"]
+            truth = item.get("ground_truth") or {}
+
+            # Persist the reasoning chain alongside the verdict. It is produced
+            # by Stage 2 anyway; storing it here means the report detail view
+            # reads it back instead of re-running the reasoner on every request.
+            steps = (res.get("reasoning") or {}).get("reasoning_steps") or []
+            if steps:
+                clf["reasoning_chain"] = steps
+
+            # Preserve the observation time from the source export. Stamping
+            # every row with import time would collapse the whole 12-month
+            # history into one spike and make the trend/early-warning charts
+            # meaningless.
+            ts = item.get("timestamp") or _now()
+            if isinstance(ts, str):
+                try:
+                    ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    ts = _now()
+
+            def _label(field: str):
+                node = ext.get(field)
+                if isinstance(node, dict):
+                    return node.get("label") or node.get("text")
+                return node
+
+            energy_type = truth.get("energy_type") or _label("energy_type")
+            barrier_status = truth.get("barrier_status") or _label("barrier_status")
+
             report = ReportModel(
                 report_id=item["report_id"],
                 site=item["site"],
-                timestamp=_now(),
+                timestamp=ts,
                 source=item.get("source", "synthetic"),
                 report_text=item["report_text"],
                 sif_potential=bool(clf.get("sif_potential", False)),
                 bucket=str(clf.get("bucket", "HIGH_CONF_NON_SIF")),
-                lsr_tag=str(clf.get("lsr_tag", "Energy Isolation")),
+                lsr_tag=str(clf.get("lsr_tag") or "N/A"),
                 extracted_fields=ext,
                 classification=clf,
-                model_version=str(clf.get("model_version", "baseline2-v0.3")),
+                model_version=str(clf.get("model_version", "sentinel-v2.0")),
                 review_status="pending",
                 batch_id=batch_id,
+                # denormalised structured event frame (see database.py)
+                activity=truth.get("activity") or _label("activity"),
+                energy_type=energy_type,
+                barrier_type=truth.get("barrier_type") or _energy_to_barrier(energy_type),
+                barrier_status=barrier_status,
+                barrier_failure_mode=truth.get("barrier_failure_mode") or None,
+                exposure=truth.get("exposure") or _label("exposure"),
+                magnitude_class=int(truth.get("magnitude_class") or _magnitude(energy_type)),
+                confidence=float(clf.get("confidence") or 0.0),
+                is_high_energy=bool(_is_high_energy(energy_type)),
+                reporter_role=item.get("reporter_role"),
             )
             db.merge(report)
 
-        # Update batch tracker
         tracker = db.query(BatchTrackerModel).filter(BatchTrackerModel.batch_id == batch_id).first()
         if tracker:
             tracker.classified = len(results)
@@ -326,6 +396,39 @@ def _process_batch_ingestion(batch_id: str, batch_input: list[dict[str, Any]]):
         print(f"Batch ingestion failed for {batch_id}: {exc}")
     finally:
         db.close()
+
+
+def _energy_to_barrier(energy_type: Optional[str]) -> Optional[str]:
+    if not energy_type:
+        return None
+    try:
+        from sif_engine.data_generation.ontology import barrier_for
+
+        return barrier_for(str(energy_type))
+    except Exception:
+        return None
+
+
+def _magnitude(energy_type: Optional[str]) -> int:
+    if not energy_type:
+        return 1
+    try:
+        from sif_engine.data_generation.ontology import magnitude_of
+
+        return magnitude_of(str(energy_type))
+    except Exception:
+        return 1
+
+
+def _is_high_energy(energy_type: Optional[str]) -> bool:
+    if not energy_type:
+        return False
+    try:
+        from sif_engine.data_generation.ontology import high_energy
+
+        return high_energy(str(energy_type))
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +450,11 @@ def ingest_reports(
             "report_text": item.report_text,
             "site": item.site,
             "source": item.source.value if hasattr(item.source, "value") else str(item.source),
+            # These were being dropped, so every ingested report got stamped with
+            # import time and the whole history collapsed onto a single date.
+            "timestamp": item.timestamp,
+            "reporter_role": item.reporter_role,
+            "ground_truth": item.ground_truth,
         })
 
     # Record initial batch status
@@ -368,6 +476,75 @@ def ingest_reports(
         batch_id=batch_id,
         status="processing",
     )
+
+
+@app.post("/api/v1/reports/submit", response_model=ReportDetail, status_code=201, tags=["ingestion"])
+def submit_report(
+    payload: ReportSubmitRequest,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """File a single observation and get the analysis straight back.
+
+    Runs Stage 0-3 synchronously (~15 ms) rather than queuing, because the whole
+    point is that the person who wrote the report sees what the engine made of it
+    while the situation is still fresh. Open to any authenticated role - the
+    people who file reports are not HSE managers, and requiring manager rights to
+    report a hazard would be a strange safety system.
+    """
+    username, _role = user
+    report_id = _new_id("obs")
+
+    result = run_single(report_id, payload.report_text, site=payload.site)
+    clf = dict(result["classification"])
+    ext = result["extracted_fields"]
+
+    steps = (result.get("reasoning") or {}).get("reasoning_steps") or []
+    if steps:
+        clf["reasoning_chain"] = steps
+
+    def _label(field: str):
+        node = ext.get(field)
+        if isinstance(node, dict):
+            return node.get("label") or node.get("text")
+        return node
+
+    energy_type = _label("energy_type")
+    observed = payload.observed_at or _now()
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+
+    record = ReportModel(
+        report_id=report_id,
+        site=payload.site,
+        timestamp=observed,
+        # Filed by a person through the console, not generated. Marked "real" so
+        # it is visibly distinguishable from the synthetic corpus in the UI.
+        source="real",
+        report_text=payload.report_text,
+        sif_potential=bool(clf.get("sif_potential", False)),
+        bucket=str(clf.get("bucket", "HIGH_CONF_NON_SIF")),
+        lsr_tag=str(clf.get("lsr_tag") or "N/A"),
+        extracted_fields=ext,
+        classification=clf,
+        model_version=str(clf.get("model_version", "sentinel-v2.0")),
+        review_status="pending",
+        batch_id=None,
+        activity=payload.activity or _label("activity"),
+        energy_type=energy_type,
+        barrier_type=_energy_to_barrier(energy_type),
+        barrier_status=_label("barrier_status"),
+        exposure=_label("exposure"),
+        magnitude_class=_magnitude(energy_type),
+        confidence=float(clf.get("confidence") or 0.0),
+        is_high_energy=bool(_is_high_energy(energy_type)),
+        reporter_role=payload.reporter_role or username,
+    )
+    db.add(record)
+    _audit(db, "report", report_id, "submitted", username)
+    db.commit()
+
+    return get_report_detail(report_id, user=user, db=db)
 
 
 @app.get("/api/v1/reports/ingest/{batch_id}/status", response_model=BatchStatusResponse, tags=["ingestion"])
@@ -501,6 +678,7 @@ def get_report_detail(
                 "contradictions_detected": r_res.get("contradictions_detected", []),
                 "audit_justification": r_res.get("justification", clf.get("justification", "")),
                 "decision_factors": r_res.get("decision_factors", {}),
+                "reasoning_steps": r_res.get("reasoning_steps", []),
             }
         except Exception:
             reasoning_data = None
@@ -538,6 +716,15 @@ def get_report_detail(
             lsr_tag=clf["lsr_tag"],
             justification=clf["justification"],
             model_version=clf["model_version"],
+            reasoning_chain=[
+                ReasoningStep(**step)
+                for step in (
+                    clf.get("reasoning_chain")
+                    or (reasoning_data or {}).get("reasoning_steps")
+                    or []
+                )
+                if isinstance(step, dict) and {"step", "label", "detail"} <= set(step)
+            ],
         ),
         review_status=record.review_status,
         reasoning=reasoning_data,
@@ -623,124 +810,157 @@ def get_rankings(
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    cutoff = _now() - timedelta(days=window_days)
+    """Rank sites/activities by SIF-precursor density.
+
+    Both metrics are always computable and the response states which was used,
+    whether it is calibrated (it is not), and — for the composite — the exact
+    weights and per-component breakdown behind every score.
+    """
+    cutoff = _now() - timedelta(days=window_days * 2)
     reports = db.query(ReportModel).filter(ReportModel.timestamp >= cutoff).all()
+    frames = analytics.frames_from(reports)
 
-    groups: dict[str, list[ReportModel]] = defaultdict(list)
-    for r in reports:
-        if group_by == "site":
-            key = r.site
-        else:
-            act = r.extracted_fields.get("activity", {}).get("text") or "general activity"
-            key = act
-        groups[key].append(r)
+    result = analytics.compute_density(
+        frames, group_by=group_by, metric=metric, window_days=window_days, now=_now()
+    )
 
-    rankings: list[RankingRow] = []
-    for g_name, reps in groups.items():
-        total = len(reps)
-        sif_count = sum(1 for r in reps if r.sif_potential)
-        density = round(sif_count / total, 3) if total > 0 else 0.0
-
-        lsr_counts = Counter(r.lsr_tag for r in reps if r.lsr_tag)
-        primary_lsr = lsr_counts.most_common(1)[0][0] if lsr_counts else "Energy Isolation"
-
-        # Trend calculation based on split window
-        midpoint = _now() - timedelta(days=window_days // 2)
-        past_reps = [r for r in reps if _ensure_tz(r.timestamp) < midpoint]
-        curr_reps = [r for r in reps if _ensure_tz(r.timestamp) >= midpoint]
-        past_sif = sum(1 for r in past_reps if r.sif_potential)
-        curr_sif = sum(1 for r in curr_reps if r.sif_potential)
-
-        if past_sif == 0:
-            trend_pct = 0.0 if curr_sif == 0 else 100.0
-        else:
-            trend_pct = round(((curr_sif - past_sif) / past_sif) * 100.0, 1)
-
-        trend_dir = "up" if trend_pct > 5.0 else ("down" if trend_pct < -5.0 else "flat")
-
-        rankings.append(
-            RankingRow(
-                group=g_name,
-                sif_flagged_count=sif_count,
-                total_reports=total,
-                density=density,
-                trend_direction=trend_dir,
-                trend_pct=trend_pct,
-                primary_lsr=primary_lsr,
-            )
+    rankings = [
+        RankingRow(
+            group=row["group"],
+            sif_flagged_count=row["sif_flagged_count"],
+            total_reports=row["total_reports"],
+            density=row["density"],
+            simple_density=row["simple_density"],
+            trend_direction=row["trend_direction"],
+            trend_pct=row["trend_pct"],
+            primary_lsr=row["primary_lsr"],
+            components=row["components"],
         )
+        for row in result["rankings"]
+    ]
 
-    # Sort descending by SIF count
-    rankings.sort(key=lambda r: (r.sif_flagged_count, r.density), reverse=True)
+    weights = None
+    if metric == "composite":
+        weights = MetricWeights(**{
+            k: v for k, v in (result.get("weights") or {}).items()
+            if k in MetricWeights.model_fields
+        })
 
-    weights = MetricWeights() if metric == "composite" else None
     return RankingsResponse(
-        metric=metric,
-        window_days=window_days,
+        metric=result["metric"],
+        window_days=result["window_days"],
+        group_by=result["group_by"],
         rankings=rankings,
         weights=weights,
+        calibrated=False,
+        note=result["note"],
     )
 
 
 @app.get("/api/v1/dashboard/clusters", response_model=ClustersResponse, tags=["dashboard"])
 def get_clusters(
     site: Optional[str] = None,
-    min_cluster_size: int = 1,
+    min_cluster_size: int = 3,
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(ReportModel).filter(ReportModel.sif_potential == True)
-    if site:
-        query = query.filter(ReportModel.site == site)
-    sif_reports = query.all()
+    """Precursor clusters from the batch clustering job.
 
-    # Deterministic grouping by (lsr_tag, energy_type, barrier_status)
-    cluster_buckets: dict[str, list[ReportModel]] = defaultdict(list)
-    for r in sif_reports:
-        ext = r.extracted_fields
-        energy = ext.get("energy_type", {}).get("label", "energy")
-        barrier = ext.get("barrier_status", {}).get("label", "uncertain")
-        key = f"{r.lsr_tag} | {energy} | {barrier}"
-        cluster_buckets[key].append(r)
+    Served from `precursor_clusters`, which the batch job populates. HDBSCAN
+    over tens of thousands of structured frames takes seconds, so recomputing
+    it inside a page load would be dishonest about the deployment model as
+    well as slow. If the table is empty (fresh DB), it is computed on demand
+    once so the dashboard is never blank.
+    """
+    stored = db.query(PrecursorClusterModel).all()
+    if not stored:
+        written = _recompute_clusters(db)
+        if written:
+            stored = db.query(PrecursorClusterModel).all()
 
     clusters: list[ClusterItem] = []
     edges: list[ClusterEdge] = []
-    cid_counter = 1
 
-    for key, reps in cluster_buckets.items():
-        if len(reps) < min_cluster_size:
+    for row in stored:
+        if row.member_count < min_cluster_size:
             continue
-        c_id = f"c{cid_counter}"
-        cid_counter += 1
-        member_ids = [r.report_id for r in reps]
-        cluster_sites = list(set(r.site for r in reps))
-        primary_lsr = reps[0].lsr_tag
-
-        pattern_type = PatternType.established if len(reps) >= 3 else PatternType.emerging
-
+        if site and site not in (row.sites or []):
+            continue
         clusters.append(
             ClusterItem(
-                cluster_id=c_id,
-                pattern_summary=key,
-                member_report_ids=member_ids,
-                member_count=len(reps),
-                sites=cluster_sites,
-                primary_lsr=primary_lsr,
-                pattern_type=pattern_type,
+                cluster_id=row.cluster_id,
+                pattern_summary=row.pattern_summary,
+                member_report_ids=row.member_report_ids or [],
+                member_count=row.member_count,
+                sites=row.sites or [],
+                site_count=row.site_count,
+                primary_lsr=row.primary_lsr or "N/A",
+                primary_barrier_failure=row.primary_barrier_failure,
+                barrier_type=row.barrier_type,
+                pattern_type=PatternType(row.pattern_type)
+                if row.pattern_type in PatternType.__members__.values()
+                or row.pattern_type in [e.value for e in PatternType]
+                else PatternType.established,
+                sif_member_count=row.sif_member_count,
+                sif_share=row.sif_share,
+                mean_magnitude=row.mean_magnitude,
+                first_seen=row.first_seen.isoformat() if row.first_seen else None,
+                last_seen=row.last_seen.isoformat() if row.last_seen else None,
             )
         )
+        for e in (row.edges or []):
+            edges.append(ClusterEdge(**e))
 
-        # Build similarity edges between members of the cluster
-        for i in range(min(len(member_ids) - 1, 5)):
-            edges.append(
-                ClusterEdge(
-                    source=member_ids[i],
-                    target=member_ids[i + 1],
-                    similarity=0.88,
-                )
+    clusters.sort(key=lambda c: -c.member_count)
+    computed = max((r.computed_at for r in stored if r.computed_at), default=None)
+    return ClustersResponse(
+        clusters=clusters,
+        edges=edges,
+        computed_at=computed.isoformat() if computed else None,
+    )
+
+
+def _recompute_clusters(db: Session, min_cluster_size: int = 15) -> int:
+    """Run the batch clustering job and persist the result."""
+    reports = db.query(ReportModel).filter(ReportModel.sif_potential == True).all()  # noqa: E712
+    if len(reports) < min_cluster_size:
+        return 0
+    frames = analytics.frames_from(reports)
+    result = analytics.compute_clusters(frames, min_cluster_size=min_cluster_size)
+
+    edges_by_cluster: dict[str, list[dict]] = defaultdict(list)
+    for e in result["edges"]:
+        edges_by_cluster[e.get("cluster_id", "")].append(e)
+
+    db.query(PrecursorClusterModel).delete()
+    for c in result["clusters"]:
+        db.add(PrecursorClusterModel(
+            cluster_id=c["cluster_id"],
+            pattern_summary=c["pattern_summary"],
+            member_report_ids=c["member_report_ids"],
+            member_count=c["member_count"],
+            sites=c["sites"],
+            site_count=c["site_count"],
+            primary_lsr=c["primary_lsr"],
+            primary_barrier_failure=c["primary_barrier_failure"],
+            barrier_type=c["barrier_type"],
+            pattern_type=c["pattern_type"],
+            sif_member_count=c["sif_member_count"],
+            sif_share=c["sif_share"],
+            mean_magnitude=c["mean_magnitude"],
+            first_seen=datetime.fromisoformat(c["first_seen"]) if c["first_seen"] else None,
+            last_seen=datetime.fromisoformat(c["last_seen"]) if c["last_seen"] else None,
+            edges=edges_by_cluster.get(c["cluster_id"], []),
+            computed_at=_now(),
+        ))
+    # Stamp each report with its cluster so the detail view can link back.
+    for c in result["clusters"]:
+        for rid in c["member_report_ids"]:
+            db.query(ReportModel).filter(ReportModel.report_id == rid).update(
+                {"cluster_id": c["cluster_id"]}, synchronize_session=False
             )
-
-    return ClustersResponse(clusters=clusters, edges=edges)
+    db.commit()
+    return len(result["clusters"])
 
 
 @app.get("/api/v1/dashboard/trends", response_model=TrendsResponse, tags=["dashboard"])
@@ -751,6 +971,13 @@ def get_trends(
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Precursor-rate early warning via statistical process control.
+
+    Real CUSUM and EWMA control charts against a rolling baseline - not a
+    prediction. The alert wording is a fixed constant in the AI/ML layer so it
+    cannot drift into a causal or predictive claim, and `method_note` states
+    the limitation explicitly for rendering next to the chart.
+    """
     query = db.query(ReportModel)
     if site:
         query = query.filter(ReportModel.site == site)
@@ -758,36 +985,39 @@ def get_trends(
         query = query.filter(ReportModel.lsr_tag == lsr_tag)
     reports = query.order_by(ReportModel.timestamp.asc()).all()
 
-    # Bucket by week or month
-    buckets: dict[str, int] = defaultdict(int)
-    for r in reports:
-        dt = r.timestamp
-        if granularity == "weekly":
-            # Monday of the week
-            start_of_week = dt - timedelta(days=dt.weekday())
-            period_str = start_of_week.strftime("%Y-%m-%d")
-        else:
-            period_str = dt.strftime("%Y-%m-01")
-        buckets[period_str] += 1
+    frames = analytics.frames_from(reports)
+    result = analytics.compute_trends(frames, granularity=granularity)
 
-    series = [TrendPoint(period=p, count=c) for p, c in sorted(buckets.items())]
-
-    # CUSUM early warning detection
-    alerts: list[TrendAlert] = []
-    if len(series) >= 2:
-        counts = [pt.count for pt in series]
-        mean_c = sum(counts) / len(counts)
-        for pt in series:
-            if pt.count > mean_c * 1.75 and pt.count >= 3:
-                alerts.append(
-                    TrendAlert(
-                        period=pt.period,
-                        message="Unusual increase in reported precursor rate — investigate.",
-                        method="CUSUM",
-                    )
-                )
-
-    return TrendsResponse(series=series, alerts=alerts)
+    series = [
+        TrendPoint(
+            period=row["period"],
+            count=int(row["count"]),
+            total_reports=int(row["total_reports"]),
+            sif_count=int(row["sif_count"]),
+            precursor_rate=float(row["precursor_rate"]),
+        )
+        for row in result["series"]
+    ]
+    alerts = [
+        TrendAlert(
+            period=a["period"],
+            message=a["message"],
+            method=a["method"],
+            count=float(a["count"]),
+            baseline_mean=float(a["baseline_mean"]),
+            threshold=float(a["threshold"]),
+            severity=a["severity"],
+        )
+        for a in result["alerts"]
+    ]
+    return TrendsResponse(
+        series=series,
+        alerts=alerts,
+        granularity=result["granularity"],
+        cusum=result["cusum"],
+        ewma=result["ewma"],
+        method_note=result["method_note"],
+    )
 
 
 @app.get("/api/v1/dashboard/summary", response_model=DashboardSummary, tags=["dashboard"])
@@ -795,37 +1025,59 @@ def get_dashboard_summary(
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    total = db.query(ReportModel).count()
+    total = db.query(func.count(ReportModel.report_id)).scalar() or 0
     pending = (
-        db.query(ReportModel)
+        db.query(func.count(ReportModel.report_id))
         .filter(
             ReportModel.review_status == "pending",
-            ReportModel.bucket.in_(["LOW_CONF_REVIEW", "NEEDS_MORE_INFO"]),
+            ReportModel.bucket.in_(["LOW_CONF_REVIEW", "NEEDS_MORE_INFO", "HIGH_CONF_SIF"]),
         )
-        .count()
+        .scalar()
+        or 0
+    )
+    flagged = (
+        db.query(func.count(ReportModel.report_id))
+        .filter(ReportModel.sif_potential == True)  # noqa: E712
+        .scalar()
+        or 0
     )
 
-    high_sif_clusters = (
-        db.query(ReportModel)
-        .filter(ReportModel.sif_potential == True)
-        .group_by(ReportModel.lsr_tag)
-        .count()
+    # Real distribution across the 4 routing buckets, in one grouped query.
+    bucket_counts = {
+        str(bucket): int(count)
+        for bucket, count in db.query(ReportModel.bucket, func.count(ReportModel.report_id))
+        .group_by(ReportModel.bucket)
+        .all()
+    }
+
+    site_count = db.query(func.count(func.distinct(ReportModel.site))).scalar() or 0
+
+    # Pattern counts come from the clustering job, not from counting distinct
+    # LSR tags — the previous version reported "9 patterns" on any corpus that
+    # merely used all nine Life-Saving Rules, which is not a pattern at all.
+    pattern_count = db.query(func.count(PrecursorClusterModel.cluster_id)).scalar() or 0
+    emerging = (
+        db.query(func.count(PrecursorClusterModel.cluster_id))
+        .filter(PrecursorClusterModel.pattern_type == "emerging")
+        .scalar()
+        or 0
     )
 
-    latest_rep = db.query(ReportModel).order_by(ReportModel.timestamp.desc()).first()
-    last_ingested = latest_rep.timestamp if latest_rep else _now()
+    latest = db.query(ReportModel).order_by(ReportModel.timestamp.desc()).first()
 
     return DashboardSummary(
-        total_reports=total,
-        high_priority_pattern_count=max(high_sif_clusters, 1 if total > 0 else 0),
-        reports_pending_review=pending,
-        last_ingested_at=last_ingested,
+        total_reports=int(total),
+        high_priority_pattern_count=int(pattern_count),
+        reports_pending_review=int(pending),
+        last_ingested_at=latest.timestamp if latest else None,
+        bucket_counts=bucket_counts,
+        sif_flagged_count=int(flagged),
+        sif_rate=round(flagged / total, 4) if total else 0.0,
+        site_count=int(site_count),
+        emerging_pattern_count=int(emerging),
     )
 
 
-# ---------------------------------------------------------------------------
-# 4. Review Queue
-# ---------------------------------------------------------------------------
 @app.get("/api/v1/review-queue", response_model=PaginatedReports, tags=["review"])
 def get_review_queue(
     site: Optional[str] = None,
@@ -835,17 +1087,34 @@ def get_review_queue(
     user: tuple[str, Role] = Depends(require_role(Role.hse_reviewer, Role.hse_manager)),
     db: Session = Depends(get_db),
 ):
+    # HIGH_CONF_SIF belongs in this queue and was previously excluded, which
+    # meant the highest-priority precursors - the reports this whole system
+    # exists to surface - never appeared anywhere a reviewer would look. The
+    # bucket determines PRIORITY within the queue, not whether you are in it.
     query = db.query(ReportModel).filter(
-        ReportModel.bucket.in_(["LOW_CONF_REVIEW", "NEEDS_MORE_INFO"]),
+        ReportModel.bucket.in_(["HIGH_CONF_SIF", "LOW_CONF_REVIEW", "NEEDS_MORE_INFO"]),
         ReportModel.review_status == "pending",
     )
     if site:
         query = query.filter(ReportModel.site == site)
 
-    if sort == "newest":
-        query = query.order_by(ReportModel.timestamp.desc())
+    # Priority ordering first, then the caller's sort. A high-confidence
+    # precursor from last month outranks an incomplete report filed this
+    # morning, so bucket has to dominate the timestamp.
+    bucket_rank = case(
+        (ReportModel.bucket == "HIGH_CONF_SIF", 0),
+        (ReportModel.bucket == "LOW_CONF_REVIEW", 1),
+        else_=2,
+    )
+
+    if sort == "confidence_asc":
+        # Lowest confidence first: the reports the model is least sure about,
+        # where a human adds the most value.
+        query = query.order_by(ReportModel.confidence.asc().nullslast())
+    elif sort == "newest":
+        query = query.order_by(bucket_rank, ReportModel.timestamp.desc())
     else:
-        query = query.order_by(ReportModel.timestamp.asc())
+        query = query.order_by(bucket_rank, ReportModel.timestamp.asc())
 
     total = query.count()
     records = query.offset(offset).limit(limit).all()
@@ -959,39 +1228,70 @@ def submit_review_action(
 # ---------------------------------------------------------------------------
 # 5. Recommendations / Intervention Engine
 # ---------------------------------------------------------------------------
+def _cluster_and_frames(db: Session, pattern_id: Optional[str] = None):
+    """Load persisted clusters plus the event frames of their members."""
+    q = db.query(PrecursorClusterModel)
+    if pattern_id:
+        q = q.filter(PrecursorClusterModel.cluster_id == pattern_id)
+    rows = q.all()
+    if not rows and not pattern_id:
+        _recompute_clusters(db)
+        rows = db.query(PrecursorClusterModel).all()
+
+    clusters = [{
+        "cluster_id": r.cluster_id,
+        "pattern_summary": r.pattern_summary,
+        "member_report_ids": r.member_report_ids or [],
+        "member_count": r.member_count,
+        "sites": r.sites or [],
+        "site_count": r.site_count,
+        "primary_lsr": r.primary_lsr,
+        "primary_barrier_failure": r.primary_barrier_failure,
+        "barrier_type": r.barrier_type,
+        "pattern_type": r.pattern_type,
+    } for r in rows]
+
+    member_ids = {rid for c in clusters for rid in c["member_report_ids"]}
+    frames = []
+    if member_ids:
+        ids = list(member_ids)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            reports = db.query(ReportModel).filter(ReportModel.report_id.in_(chunk)).all()
+            frames.extend(analytics.frames_from(reports))
+    return clusters, frames
+
+
 @app.get("/api/v1/recommendations", response_model=RecommendationsResponse, tags=["recommendations"])
 def list_recommendations(
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Compile curated recommendations from persisted SIF clusters
-    recs = [
+    """Ranked intervention list, built from detected clusters.
+
+    Interventions come from the curated, version-controlled control library in
+    the AI/ML package and are ranked by hierarchy of controls. Nothing here is
+    generated text.
+    """
+    clusters, frames = _cluster_and_frames(db)
+    recs = analytics.build_recommendations(clusters, frames, limit=20)
+
+    items = [
         RecommendationListItem(
-            pattern_id="c17",
-            title="Energy Isolation Failure",
+            pattern_id=r["pattern_id"],
+            title=r["title"],
             evidence_summary=EvidenceSummary(
-                report_count=db.query(ReportModel).filter(ReportModel.lsr_tag == "Energy Isolation").count() or 18,
-                site_count=4,
-                window_days=42,
-                trend_pct=45.0,
+                report_count=r["evidence"]["report_count"],
+                site_count=r["evidence"]["site_count"],
+                window_days=r["evidence"]["window_days"],
+                trend_pct=0.0,
             ),
-            primary_barrier_failure="Isolation verification",
-            priority="HIGH",
-        ),
-        RecommendationListItem(
-            pattern_id="c18",
-            title="Confined Space Entry Protocol Violation",
-            evidence_summary=EvidenceSummary(
-                report_count=db.query(ReportModel).filter(ReportModel.lsr_tag == "Confined Space").count() or 6,
-                site_count=2,
-                window_days=42,
-                trend_pct=15.0,
-            ),
-            primary_barrier_failure="Gas testing re-verification",
-            priority="HIGH",
-        ),
+            primary_barrier_failure=r["primary_barrier_failure"],
+            priority=r["priority"],
+        )
+        for r in recs
     ]
-    return RecommendationsResponse(recommendations=recs)
+    return RecommendationsResponse(recommendations=items)
 
 
 @app.get("/api/v1/recommendations/{pattern_id}", response_model=RecommendationDetail, tags=["recommendations"])
@@ -1000,42 +1300,39 @@ def get_recommendation_detail(
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    clusters, frames = _cluster_and_frames(db, pattern_id=pattern_id)
+    if not clusters:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "PATTERN_NOT_FOUND",
+                    "message": f"No pattern with id {pattern_id}", "status": 404},
+        )
+
+    detail = analytics.build_recommendation_detail(clusters[0], frames)
+    ev = detail["evidence"]
     return RecommendationDetail(
-        pattern_id=pattern_id,
-        title="Energy Isolation Failure",
+        pattern_id=detail["pattern_id"],
+        title=detail["title"],
         evidence=EvidenceDetail(
-            report_count=18,
-            site_count=4,
-            window_days=42,
-            member_report_ids=["a1b2c3d4", "e5f6a7b8"],
-            breakdown=EvidenceBreakdown(
-                mentions_missing_isolation=14,
-                involves_maintenance=11,
-                involves_equipment_opening=8,
-            ),
-            sites=["Rig 4", "Rig 7", "Plant C", "Well Site B"],
+            report_count=ev["report_count"],
+            site_count=ev["site_count"],
+            window_days=ev["window_days"],
+            member_report_ids=ev["member_report_ids"],
+            breakdown=ev["breakdown"],
+            sites=ev["sites"],
+            first_seen=ev.get("first_seen"),
+            last_seen=ev.get("last_seen"),
         ),
         recommended_interventions=[
             RecommendedIntervention(
-                rank=1,
-                control_level="administrative",
-                priority="HIGH",
-                action="Mandatory isolation verification checkpoint",
-            ),
-            RecommendedIntervention(
-                rank=2,
-                control_level="administrative",
-                priority="HIGH",
-                action="Supervisor PTW closure/start checkpoint",
-            ),
-            RecommendedIntervention(
-                rank=3,
-                control_level="training",
-                priority="MEDIUM",
-                action="Targeted Energy Isolation toolbox campaign",
-            ),
+                rank=i["rank"],
+                control_level=i["control_level"],
+                priority=i["priority"],
+                action=i["action"],
+            )
+            for i in detail["recommended_interventions"]
         ],
-        expected_objective="Reduce recurrence of reports involving unverified energy isolation.",
+        expected_objective=detail["expected_objective"],
     )
 
 
@@ -1133,6 +1430,88 @@ def get_action_plan_impact(
 # ---------------------------------------------------------------------------
 # 6. Audit, Admin, Health, Ontology
 # ---------------------------------------------------------------------------
+@app.get("/api/v1/patterns/associations", response_model=AssociationsResponse, tags=["patterns"])
+def get_associations(
+    site: Optional[str] = None,
+    min_lift: float = 1.3,
+    min_confidence: float = 0.5,
+    top_n: int = 25,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Co-occurrence rules over structured event tuples.
+
+    Surfaces combinations that are individually unremarkable but jointly
+    dangerous. Every statement is phrased as co-occurrence with an explicit
+    baseline and lift - never as causation, which observational report data
+    cannot support.
+    """
+    query = db.query(ReportModel)
+    if site:
+        query = query.filter(ReportModel.site == site)
+    frames = analytics.frames_from(query.all())
+
+    rules = analytics.compute_associations(
+        frames, min_confidence=min_confidence, min_lift=min_lift, top_n=top_n
+    )
+    return AssociationsResponse(rules=[
+        AssociationRule(
+            antecedent_text=r["antecedent_text"],
+            consequent_text=r["consequent_text"],
+            support=r["support"],
+            confidence=r["confidence"],
+            baseline=r["baseline"],
+            lift=r["lift"],
+            report_count=r["report_count"],
+            statement=r["statement"],
+        )
+        for r in rules
+    ])
+
+
+@app.get("/api/v1/patterns/barrier-failures", response_model=BarrierFailuresResponse, tags=["patterns"])
+def get_barrier_failures(
+    site: Optional[str] = None,
+    min_count: int = 5,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """(activity, barrier failure mode) pairs ranked by SIF-flagged share."""
+    query = db.query(ReportModel)
+    if site:
+        query = query.filter(ReportModel.site == site)
+    frames = analytics.frames_from(query.all())
+
+    items = analytics.compute_barrier_failures(frames, min_count=min_count)
+    return BarrierFailuresResponse(items=[BarrierFailureRow(**i) for i in items])
+
+
+@app.post("/api/v1/admin/recompute-patterns", response_model=RecomputeResponse, tags=["admin"])
+def recompute_patterns(
+    min_cluster_size: int = 15,
+    user: tuple[str, Role] = Depends(require_role(Role.hse_manager)),
+    db: Session = Depends(get_db),
+):
+    """Re-run the batch clustering job.
+
+    Exposed as an endpoint because clustering is a scheduled batch job in the
+    real deployment, and a demo needs a way to trigger it after ingesting new
+    reports without restarting the service.
+    """
+    import time as _time
+
+    started = _time.time()
+    total = db.query(func.count(ReportModel.report_id)).scalar() or 0
+    written = _recompute_clusters(db, min_cluster_size=min_cluster_size)
+    _audit(db, "patterns", "batch", "recompute_clusters", user[0])
+    db.commit()
+    return RecomputeResponse(
+        clusters_written=written,
+        reports_considered=int(total),
+        elapsed_seconds=round(_time.time() - started, 2),
+    )
+
+
 @app.get("/api/v1/audit-log", response_model=PaginatedAuditLog, tags=["admin"])
 def get_audit_log(
     entity_type: Optional[str] = None,
@@ -1225,3 +1604,49 @@ def login(payload: LoginRequest):
 def me(user: tuple[str, Role] = Depends(get_current_user)):
     username, role = user
     return MeResponse(username=username, role=role)
+
+
+# ---------------------------------------------------------------------------
+# Static console
+#
+# Serve the built React app from the API process, so the whole thing is ONE
+# origin behind ONE port. That matters for sharing: the client calls a relative
+# /api/v1, so whatever host the visitor reaches — a dev tunnel, a LAN address,
+# localhost — the API resolves alongside it. Two separate ports would need two
+# tunnels and a rebuild with the backend URL baked in.
+#
+# Registered last on purpose: every /api/v1 route is already bound above, and
+# the SPA fallback below must not shadow them.
+# ---------------------------------------------------------------------------
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(_FRONTEND_DIST / "assets")),
+        name="assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_console(full_path: str):
+        """SPA fallback.
+
+        React Router owns the client-side routes, so a deep link like
+        /reports/abc123 must return index.html and let the router resolve it
+        rather than 404. API paths are excluded explicitly — without this an
+        unknown /api/v1/... would silently return the HTML page instead of a
+        JSON 404, which is a genuinely confusing thing to debug.
+        """
+        if full_path.startswith(("api/", "docs", "redoc", "openapi.json")):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "NOT_FOUND", "message": f"No route /{full_path}", "status": 404},
+            )
+
+        candidate = _FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_DIST / "index.html")

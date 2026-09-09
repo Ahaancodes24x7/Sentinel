@@ -1,207 +1,227 @@
-import React, { useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import {
-  LayoutDashboard,
-  ShieldAlert,
-  FileText,
-  AlertTriangle,
-  ShieldX,
-  Layers,
-  CheckSquare,
-  Lightbulb,
+  Activity,
   BarChart3,
-  Cpu,
-  History,
+  Boxes,
+  ClipboardCheck,
+  FileText,
+  Gauge,
+  GitBranch,
+  LayoutDashboard,
+  ListChecks,
+  PenSquare,
+  Radar,
+  ScrollText,
   Settings,
-  ChevronLeft,
-  ChevronRight,
-  Shield,
-  Building2,
-  HardHat,
-  Users,
-  Eye,
+  ShieldAlert,
+  Siren,
 } from 'lucide-react';
-import { authService } from '../../services/authService';
+import { cn } from '../../lib/cn';
+import { Counter, PulseDot } from '../kinetic';
+import { Hint } from '../common/Hint';
+import { useReviewQueue, useSummary } from '../../api/hooks';
 
-export const Sidebar: React.FC = () => {
-  const [collapsed, setCollapsed] = useState(false);
-  const user = authService.getCurrentUser();
-  const location = useLocation();
+interface NavItem {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  /** One line explaining what the screen is for. Shown on hover. */
+  hint: string;
+  badge?: 'queue';
+}
 
-  const mainNav = [
-    { name: 'Overview', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Risk Intelligence', path: '/risk-intelligence', icon: ShieldAlert },
-    { name: 'Reports', path: '/reports', icon: FileText },
-    { name: 'SIF Precursors', path: '/sif-precursors', icon: AlertTriangle },
-    { name: 'Barrier Failures', path: '/barriers', icon: ShieldX },
-    { name: 'Patterns', path: '/patterns', icon: Layers },
-    { name: 'Life-Saving Rules', path: '/life-saving-rules', icon: CheckSquare },
-    { name: 'Recommendations', path: '/recommendations', icon: Lightbulb },
-    { name: 'Analytics', path: '/analytics', icon: BarChart3 },
-  ];
+/* --------------------------------------------------------------------------
+ * Three groups, ordered by how often they are used:
+ *
+ *   DAILY     what an HSE officer touches every shift
+ *   ANALYSE   where the patterns and rankings live
+ *   SYSTEM    reference and admin — rarely opened, so it sits at the bottom
+ *
+ * Every item carries a hint, because half these labels are domain jargon that
+ * means nothing until someone explains it once.
+ * ----------------------------------------------------------------------- */
+const SECTIONS: { title: string; items: NavItem[] }[] = [
+  {
+    title: 'Daily',
+    items: [
+      {
+        to: '/dashboard',
+        label: 'Action Center',
+        icon: LayoutDashboard,
+        hint: 'The landing view: what needs attention, where the risk is, and whether anything is trending worse.',
+      },
+      {
+        to: '/submit',
+        label: 'File a Report',
+        icon: PenSquare,
+        hint: 'Write up something you saw. The engine analyses it immediately and shows you its reasoning.',
+      },
+      {
+        to: '/review-queue',
+        label: 'Review Queue',
+        icon: ClipboardCheck,
+        badge: 'queue',
+        hint: 'Reports waiting for a human decision, oldest first so nothing ages out unseen.',
+      },
+      {
+        to: '/reports',
+        label: 'All Reports',
+        icon: FileText,
+        hint: 'Browse and filter the whole corpus by site, rule or routing bucket.',
+      },
+    ],
+  },
+  {
+    title: 'Analyse',
+    items: [
+      {
+        to: '/sif-precursors',
+        label: 'SIF Precursors',
+        icon: Siren,
+        hint: 'Only the reports flagged as carrying credible fatal potential.',
+      },
+      {
+        to: '/patterns',
+        label: 'Patterns',
+        icon: GitBranch,
+        hint: 'Reports grouped by the underlying situation rather than by wording, so the same failure described ten ways lands in one cluster.',
+      },
+      {
+        to: '/barriers',
+        label: 'Barrier Failures',
+        icon: ShieldAlert,
+        hint: 'Which safety controls keep failing, and during which activity.',
+      },
+      {
+        to: '/risk-intelligence',
+        label: 'Site Risk',
+        icon: Radar,
+        hint: 'Sites ranked by precursor density, with the simple and composite metrics side by side.',
+      },
+      {
+        to: '/analytics',
+        label: 'Trends',
+        icon: BarChart3,
+        hint: 'Control charts that flag an unusual rise in the reported precursor rate. Not a prediction.',
+      },
+      {
+        to: '/recommendations',
+        label: 'Interventions',
+        icon: ListChecks,
+        hint: 'What to actually do about each pattern, ranked so engineering fixes outrank training.',
+      },
+    ],
+  },
+  {
+    title: 'System',
+    items: [
+      {
+        to: '/life-saving-rules',
+        label: 'Life-Saving Rules',
+        icon: Boxes,
+        hint: 'The nine IOGP rules and which energy types map to each.',
+      },
+      {
+        to: '/model-performance',
+        label: 'Model',
+        icon: Gauge,
+        hint: 'What the deployed model is doing right now, and how its evaluation was framed.',
+      },
+      {
+        to: '/audit-log',
+        label: 'Audit Trail',
+        icon: ScrollText,
+        hint: 'Append-only record of every classification and every human action.',
+      },
+      {
+        to: '/settings',
+        label: 'Settings',
+        icon: Settings,
+        hint: 'Runtime status, the density-metric weights, and the taxonomy version in use.',
+      },
+    ],
+  },
+];
 
-  const workspaceNav = [
-    { name: 'Sites', path: '/risk-intelligence', icon: Building2 },
-    { name: 'Assets', path: '/risk-intelligence', icon: HardHat },
-    { name: 'Teams', path: '/risk-intelligence', icon: Users },
-  ];
-
-  const systemNav = [
-    { name: 'Review Queue', path: '/review-queue', icon: Eye },
-    { name: 'Model Performance', path: '/model-performance', icon: Cpu },
-    { name: 'Audit Log', path: '/audit-log', icon: History },
-    { name: 'Settings', path: '/settings', icon: Settings },
-  ];
+export function Sidebar() {
+  const { data: queue } = useReviewQueue(undefined, 'oldest', 200);
+  const { data: summary } = useSummary();
+  const queueCount = queue?.total ?? 0;
 
   return (
-    <aside
-      className={`relative flex flex-col justify-between h-screen bg-slate-950 border-r border-slate-800 transition-all duration-300 z-40 select-none ${collapsed ? 'w-16' : 'w-64'
-        }`}
-    >
-      {/* Brand Header */}
-      <div>
-        <div className="flex items-center justify-between h-16 px-4 border-b border-slate-800 bg-slate-950/80">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="p-2 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 shrink-0">
-              <Shield className="w-5 h-5 text-blue-400" />
-            </div>
-            {!collapsed && (
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base font-black tracking-wider text-white font-telemetry">
-                    SENTINEL
-                  </span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 font-telemetry">
-                    AI
-                  </span>
-                </div>
-                <span className="text-[10px] font-medium text-slate-500 tracking-wider block">
-                  SAFETY INTELLIGENCE
-                </span>
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-          </button>
+    <aside className="relative z-10 flex h-screen w-56 shrink-0 flex-col border-r border-line bg-surface/60 backdrop-blur-xl">
+      {/* Brand */}
+      <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
+        <div className="flex h-7 w-7 items-center justify-center rounded-sm bg-hivis">
+          <Activity className="h-4 w-4 text-on-hivis" strokeWidth={2.75} />
         </div>
-
-        {/* Navigation Sections */}
-        <div className="p-2 space-y-6 overflow-y-auto max-h-[calc(100vh-140px)]">
-          {/* Main Nav */}
-          <div>
-            {!collapsed && (
-              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 font-telemetry">
-                Core Command
-              </div>
-            )}
-            <nav className="space-y-1">
-              {mainNav.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.path;
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${isActive
-                        ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 font-bold shadow-sm'
-                        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
-                      }`}
-                    title={collapsed ? item.name : undefined}
-                  >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
-                    {!collapsed && <span>{item.name}</span>}
-                  </NavLink>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Workspace Nav */}
-          <div>
-            {!collapsed && (
-              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 font-telemetry">
-                Workspace
-              </div>
-            )}
-            <nav className="space-y-1">
-              {workspaceNav.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.name}
-                    to={item.path}
-                    className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-900 transition-colors"
-                    title={collapsed ? item.name : undefined}
-                  >
-                    <Icon className="w-4 h-4 shrink-0 text-slate-500" />
-                    {!collapsed && <span>{item.name}</span>}
-                  </NavLink>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* System Nav */}
-          <div>
-            {!collapsed && (
-              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500 font-telemetry">
-                System Intelligence
-              </div>
-            )}
-            <nav className="space-y-1">
-              {systemNav.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.path;
-                return (
-                  <NavLink
-                    key={item.name}
-                    to={item.path}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${isActive
-                        ? 'bg-purple-600/20 text-purple-300 border border-purple-500/30 font-bold'
-                        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900'
-                      }`}
-                    title={collapsed ? item.name : undefined}
-                  >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-purple-400' : 'text-slate-500'}`} />
-                    {!collapsed && <span>{item.name}</span>}
-                  </NavLink>
-                );
-              })}
-            </nav>
-          </div>
+        <div className="min-w-0">
+          <div className="font-display text-lg leading-none text-ink">SENTINEL</div>
+          <div className="font-mono text-[9px] tracked text-ink-4">PS 26165 · OIL INDIA</div>
         </div>
       </div>
 
-      {/* User Footer */}
-      <div className="p-3 border-t border-slate-800 bg-slate-950/90">
-        <div className="flex items-center gap-3">
-          <div className="relative shrink-0">
-            <img
-              src={user.avatar}
-              alt={user.name}
-              className="w-8 h-8 rounded-full border border-slate-700 object-cover"
-            />
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-slate-950" />
-          </div>
-
-          {!collapsed && (
-            <div className="overflow-hidden">
-              <div className="text-xs font-bold text-slate-200 truncate">{user.name}</div>
-              <div className="text-[10px] text-slate-400 truncate uppercase font-telemetry">
-                {user.role.replace('_', ' ')}
-              </div>
-              <div className="text-[10px] text-blue-400 truncate font-semibold">
-                {user.organization}
-              </div>
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
+        {SECTIONS.map((section) => (
+          <div key={section.title} className="mb-5">
+            <div className="px-2 pb-1.5 font-mono text-[9px] tracked text-ink-4">
+              {section.title}
             </div>
-          )}
+            <div className="space-y-0.5">
+              {section.items.map((item) => (
+                <Hint key={item.to} content={item.hint} side="right" delay={450} className="block w-full">
+                  <NavLink
+                    to={item.to}
+                    className={({ isActive }) =>
+                      cn(
+                        'group relative flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors',
+                        isActive
+                          ? 'bg-hivis-wash text-hivis'
+                          : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        {isActive && (
+                          <motion.span
+                            layoutId="nav-active"
+                            className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-hivis"
+                            transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                          />
+                        )}
+                        <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
+                        <span className="truncate">{item.label}</span>
+                        {item.badge === 'queue' && queueCount > 0 && (
+                          <span className="ml-auto rounded-sm bg-high-wash px-1.5 font-mono text-2xs tabular text-high">
+                            {queueCount > 999 ? '999+' : queueCount}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                </Hint>
+              ))}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      {/* Live corpus counter */}
+      <Hint content="Total reports that have been through the pipeline." side="right" className="block w-full">
+        <div className="w-full border-t border-line px-4 py-3">
+          <div className="flex items-center gap-2">
+            <PulseDot tone="hivis" size={6} />
+            <span className="font-mono text-[9px] tracked text-ink-4">CORPUS</span>
+          </div>
+          <div className="mt-1 font-display text-2xl text-ink">
+            <Counter value={summary?.total_reports ?? 0} />
+          </div>
+          <div className="font-mono text-[9px] tracked text-ink-4">REPORTS ANALYSED</div>
         </div>
-      </div>
+      </Hint>
     </aside>
   );
-};
+}

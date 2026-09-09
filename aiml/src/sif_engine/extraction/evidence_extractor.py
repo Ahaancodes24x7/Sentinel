@@ -23,7 +23,10 @@ from typing import Optional
 # Prototype / Synthetic Site Vocabulary & Canonical Sites
 # ---------------------------------------------------------------------------
 PROTOTYPE_SITES = [
-    "Rig 4", "Rig 7", "Plant C", "Well Site B", "Field Station 2", "Terminal A"
+    # Longest-first so "Field Station 2" is matched before a bare "Field Station".
+    "Pipeline Section 9", "Field Station 2", "Field Station 5", "Workshop Central",
+    "Well Site B", "Well Site F", "Terminal A",
+    "Plant C", "Plant D", "Rig 12", "Rig 4", "Rig 7",
 ]
 
 # ---------------------------------------------------------------------------
@@ -84,7 +87,27 @@ ACTIVITY_KEYWORD_GROUPS = {
 # Exposure Keyword & Phrase Groups
 # ---------------------------------------------------------------------------
 EXPOSURE_KEYWORD_GROUPS = {
+    # Generalizable proximity cues (prepositional/positional language), not the
+    # exact sentences the synthetic generator emits. Matching generator strings
+    # verbatim would make extraction look perfect on synthetic data while
+    # teaching us nothing about real reports.
     "direct_proximity": [
+        "at the point of exposure", "hands inside", "in front of", "astride",
+        "working inside the affected", "arm's length", "arms length",
+        "was adjusting the belt", "detection was inhibited",
+        "the disabled trip was meant to protect", "obstructed access route",
+        "walked through the affected", "affected walkway",
+        "downwind of", "splash zone", "at the open edge", "blind spot",
+        "within the marked", "immediately below", "directly beside",
+        "within reach of", "in line with", "inside the protected zone",
+        "immediate work zone", "working inside the affected area",
+        "in contact with", "head inside", "ahead of the entry check",
+        "on the discharge side", "under the raised section", "swing radius",
+        "in the path of", "in the vehicle route", "while it was still turning",
+        "bung already open", "next to the exposed source", "cordoned",
+        "unprotected platform", "guardrail removed", "without being clipped",
+        "still live", "with the feeder", "inside the vapour", "inside the vapor",
+        "next to the leak", "next to the cutting", "within the immediate",
         "within the immediate hazard zone", "directly beneath", "directly under",
         "within arm's reach", "inside the equipment", "standing within",
         "in the line of fire", "in direct path", "crew entered", "vessel entry",
@@ -98,11 +121,20 @@ EXPOSURE_KEYWORD_GROUPS = {
     ],
     "indirect_proximity": [
         "nearby", "in the vicinity", "general work area", "adjacent area",
-        "around the perimeter"
+        "around the perimeter", "metres away", "meters away",
+        "behind the barricade", "adjacent deck", "adjacent module", "adjacent",
+        "passing through the area", "moving through the area",
+        "not directly in the hazard path", "another team was working",
+        "intermittently", "outside the marked zone", "screened from the hazard",
+        "stood back from", "nearest worker",
     ],
 }
 
 NO_EXPOSURE_PHRASES = [
+    "suspended before anyone entered", "nobody was exposed",
+    "work had not yet started", "clear of workers during the activity",
+    "had been evacuated", "no one was present", "was unmanned",
+    "had been withdrawn", "for the duration of the task",
     "no personnel were in the vicinity",
     "no personnel in the vicinity",
     "area was clear of workers",
@@ -137,6 +169,15 @@ NEGATION_CUES_SINGLE = ["no", "not", "never", "nor", "lack", "absence", "unable"
 NEGATION_CUES_MULTI = ["could not", "did not", "was not", "were not", "failed to", "failed to apply"]
 
 EXPLICIT_ABSENCE_PHRASES = [
+    # Generalisable absence constructions. "no evidence of the machine guard"
+    # is an explicit absence whichever barrier follows; matching only
+    # barrier-specific strings missed exactly those cases.
+    "nobody had", "no one had", "nobody has", "no one has",
+    "had not been", "have not been", "was never", "were never",
+    "no evidence of", "had not been established", "was not applied",
+    "had been dismantled", "not reinstated", "was absent",
+    "deliberately set aside", "was not in place", "there was no",
+    "proceeded without", "started work before", "was bypassed",
     "no isolation", "no exclusion zone", "without a permit", "no permit",
     "not sighted", "isolation not done", "not isolated", "lockout not applied",
     "tagout not applied", "no gas test", "gas test not done", "no harness",
@@ -147,6 +188,11 @@ EXPLICIT_ABSENCE_PHRASES = [
 ]
 
 UNCERTAINTY_PHRASES = [
+    "could not be confirmed", "could not be located", "could not demonstrate",
+    "not re-verified", "not evidenced", "was unclear", "were unclear",
+    "nobody could confirm", "no one could confirm", "could not establish",
+    "not actively enforced", "scope had since changed", "was not timed",
+    "appeared to be in place", "reportedly",
     "unverified", "tag was unverified", "scaffold tag was unverified",
     "uncertain", "not clearly confirmed", "unconfirmed", "questionable",
     "partially completed", "incomplete permit", "hesitated before",
@@ -200,6 +246,12 @@ def extract_location(raw_text: str) -> dict:
             raw_slice = raw_text[span[0]:span[1]]
             return {
                 "value": val,
+                # `text` MUST be the literal slice of raw_text that `span`
+                # covers - the alias as written ("Moran field"), not the
+                # canonical name ("Moran"). The canonical form is kept
+                # separately in `value`/`canonical_name` for aggregation.
+                "text": raw_slice,
+                "canonical_name": val,
                 "span": span,
                 "confidence": res.get("confidence", 0.95),
                 "is_synthetic_prototype": res.get("is_synthetic_prototype", False),
@@ -216,6 +268,8 @@ def extract_location(raw_text: str) -> dict:
             span = (idx, idx + len(site))
             return {
                 "value": site,
+                "text": raw_text[span[0]:span[1]],
+                "canonical_name": site,
                 "span": span,
                 "confidence": 0.95,
                 "is_synthetic_prototype": True,
@@ -224,51 +278,6 @@ def extract_location(raw_text: str) -> dict:
             }
     return {"value": None, "span": None, "confidence": 0.0, "is_synthetic_prototype": False, "evidence": None}
 
-
-
-@dataclass
-class EvidenceSpan:
-    text: str
-    span: tuple[int, int]
-    category: Optional[str] = None
-
-
-@dataclass
-class BarrierAssessment:
-    status: str                         # "confirmed" | "uncertain" | "explicitly_absent" | "not_mentioned"
-    gap_severity: Optional[float]       # 0.0, 0.6, 1.0, or None for not_mentioned
-    evidence: list[EvidenceSpan] = field(default_factory=list)
-    confidence: float = 0.80
-
-
-def _find_phrase_spans(raw_text: str, phrase: str) -> list[tuple[int, int]]:
-    """Case-insensitive substring search returning character offsets in raw_text."""
-    raw_lower = raw_text.lower()
-    phrase_lower = phrase.lower()
-    spans = []
-    start = 0
-    while True:
-        idx = raw_lower.find(phrase_lower, start)
-        if idx == -1:
-            break
-        spans.append((idx, idx + len(phrase)))
-        start = idx + 1
-    return spans
-
-
-def extract_location(raw_text: str) -> dict:
-    """Extract location using prototype/synthetic site vocabulary."""
-    for site in PROTOTYPE_SITES:
-        idx = raw_text.find(site)
-        if idx != -1:
-            span = (idx, idx + len(site))
-            return {
-                "value": site,
-                "span": span,
-                "confidence": 0.95,
-                "evidence": EvidenceSpan(text=raw_text[span[0]:span[1]], span=span, category="location")
-            }
-    return {"value": None, "span": None, "confidence": 0.0, "evidence": None}
 
 
 def extract_category_matches(raw_text: str, keyword_groups: dict[str, list[str]]) -> dict:
@@ -332,10 +341,24 @@ def extract_activity(raw_text: str, ontology_activities: Optional[list[str]] = N
 # ---------------------------------------------------------------------------
 # Barrier Domain Concepts
 # ---------------------------------------------------------------------------
+# How far (in tokens) a confirmation word may sit from a barrier mention and
+# still be read as confirming THAT barrier. Roughly one clause.
+BARRIER_PROXIMITY_TOKENS = 8
+
 BARRIER_TERMS = [
     "isolation", "permit", "ptw", "exclusion zone", "gas test", "gas testing",
     "gas monitoring", "loto", "lockout", "tagout", "harness", "barricade",
-    "guard", "scaffold tag", "barrier", "sign-off", "lock-out", "tag-out"
+    "guard", "scaffold tag", "barrier", "sign-off", "lock-out", "tag-out",
+    # Ontology barrier nouns (configs/ontology.yaml -> barrier_types)
+    "lockout-tagout", "isolation certificate", "work permit",
+    "work authorisation", "job safety analysis", "jsa", "gas test certificate",
+    "pre-entry gas check", "atmospheric monitoring", "restricted area cordon",
+    "drop-zone barrier", "cordon", "fall arrest", "anchor point",
+    "edge protection", "fall protection", "machine guard", "coupling guard",
+    "banksman", "journey management plan", "traffic control",
+    "reversing spotter", "interlock", "esd trip", "fire and gas detection",
+    "high-level alarm", "trip system", "lift plan", "rigging inspection",
+    "load chart check", "lifting permit",
 ]
 
 
@@ -476,6 +499,16 @@ def extract_barrier_status(raw_text: str, window_words: int = 4) -> BarrierAsses
             confidence=0.85,
         )
 
+    # Token positions of every barrier mention, so a confirmation word can be
+    # required to actually refer to a barrier rather than to something else
+    # in the sentence.
+    barrier_token_positions: list[int] = []
+    for term in BARRIER_TERMS:
+        for m in re.finditer(r"" + re.escape(term) + r"", raw_lower):
+            barrier_token_positions.append(
+                len(re.findall(r"[a-zA-Z0-9']+", raw_lower[:m.start()]))
+            )
+
     # 2. Check for confirmation targets and local negation
     affirmed_evidence = []
     negated_evidence = []
@@ -483,6 +516,19 @@ def extract_barrier_status(raw_text: str, window_words: int = 4) -> BarrierAsses
         for m in re.finditer(r"\b" + re.escape(term) + r"\b", raw_lower):
             prefix_tokens = re.findall(r"[a-zA-Z0-9']+", raw_lower[:m.start()])
             tok_idx = len(prefix_tokens)
+
+            # A confirmation word only counts as barrier evidence if a barrier
+            # is actually mentioned near it. Without this gate, "a first aid
+            # dressing was APPLIED at the site clinic" reads as a confirmed
+            # barrier and clears a report whose machine guard was demonstrably
+            # missing - a false negative manufactured out of outcome text,
+            # which is the precise failure mode this system exists to prevent.
+            if barrier_token_positions and not any(
+                abs(tok_idx - pos) <= BARRIER_PROXIMITY_TOKENS
+                for pos in barrier_token_positions
+            ):
+                continue
+
             window_toks = words[max(0, tok_idx - window_words):tok_idx]
             window_bigrams = [" ".join(window_toks[j:j + 2]) for j in range(len(window_toks) - 1)]
 
