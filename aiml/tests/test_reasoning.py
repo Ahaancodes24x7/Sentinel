@@ -28,6 +28,7 @@ from sif_engine.extraction.environment_extractor import extract_environment
 from sif_engine.extraction.energy_classifier import classify_energy
 from sif_engine.reasoning.consistency import validate_consistency
 from sif_engine.reasoning.scl_reasoner import reason
+from sif_engine.reasoning.credible_consequence import evaluate_credible_consequence
 from sif_engine.site_intelligence.site_registry import resolve_site_from_text, get_site_by_id
 
 
@@ -244,3 +245,46 @@ class TestSeventeenScenarios:
         assert night["category"] != "poor_visibility"
         assert rain["category"] in {None, "weather_exposure"}
         assert rain["category"] != "slippery_surface"
+
+    def test_no_worker_exposed_is_not_exposure(self):
+        result = run_single(
+            "no_exposure_phrase",
+            "Electrical maintenance completed with no worker exposed and isolation verified.",
+        )
+        assert result["extracted_fields"]["exposure"]["label"] == "no_exposure"
+        assert result["classification"]["sif_potential"] is False
+
+    def test_reasoner_recomputes_rule_gate_over_model_flag(self):
+        evidence = extract_evidence("Routine housekeeping in the workshop; no worker was exposed.")
+        result = reason(
+            evidence=evidence,
+            energy_classification={
+                "label": "stored/electrical energy",
+                "high_energy_decision": True,
+                "is_high_energy": True,
+                "source": "model",
+            },
+        )
+        assert result["decision_factors"]["is_high_energy"] is False
+        assert result["sif_potential"] is False
+
+    def test_pressure_and_excavation_consequences_are_auditable(self):
+        pressure = evaluate_credible_consequence(
+            "stored pressure energy", "line_of_fire", "direct_proximity"
+        )
+        excavation = evaluate_credible_consequence(
+            "unspecified energy", "excavation", "direct_proximity"
+        )
+        assert pressure["potential_severity"] == "fatality"
+        assert pressure["lsr_tag"] == "Energy Isolation"
+        assert excavation["potential_severity"] == "fatality"
+        assert excavation["lsr_tag"] == "N/A"
+
+    def test_multiple_hazards_preserved(self):
+        result = run_single(
+            "multiple_hazards",
+            "Worker entered a confined space while hot work was being performed; no fire watch was posted.",
+        )
+        reasoning = result["reasoning"]
+        assert reasoning["primary_hazard"] in {"confined_space", "hot_work"}
+        assert reasoning["secondary_hazards"]

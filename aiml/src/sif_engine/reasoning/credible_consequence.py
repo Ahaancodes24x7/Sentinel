@@ -132,6 +132,34 @@ CREDIBLE_PATHWAYS: dict[str, ConsequencePathway] = {
         required_barriers=["Whip checks / safety clamps", "Barricaded exclusion radius", "Shielded guards"],
         description="High-velocity release of kinetic energy or pressurized fluid causing penetrating trauma.",
     ),
+    "stored_pressure_release": ConsequencePathway(
+        pathway_id="stored_pressure_release",
+        energy_type="stored pressure energy",
+        lsr_tag="Energy Isolation",
+        potential_severity="fatality",
+        is_sif_capable=True,
+        credible_scenarios=[
+            "Unexpected hydraulic or pneumatic release causing injection or crush injury",
+            "Pressure vessel or process line rupture causing blast and projectile trauma",
+            "Stored energy release during maintenance causing fatal struck-by injury",
+        ],
+        required_barriers=["Energy isolation", "Depressurization and drain-down", "Test-before-work verification"],
+        description="Stored hydraulic, pneumatic, or pressure energy can release without warning and cause fatal trauma.",
+    ),
+    "excavation_collapse": ConsequencePathway(
+        pathway_id="excavation_collapse",
+        energy_type="excavation collapse hazard",
+        lsr_tag="N/A",
+        potential_severity="fatality",
+        is_sif_capable=True,
+        credible_scenarios=[
+            "Trench or excavation wall collapse causing burial and asphyxiation",
+            "Underground service strike causing fire, explosion, or electrocution",
+            "Engulfment of a worker in an unsupported excavation",
+        ],
+        required_barriers=["Engineered shoring or benching", "Underground service survey", "Safe setback and access"],
+        description="Excavation hazards can cause fatal collapse or underground service strike; no specific LSR is forced.",
+    ),
 }
 
 
@@ -154,7 +182,12 @@ def evaluate_credible_consequence(
     """
     # Map energy type or hazard to pathway
     pathway_key = None
-    if "suspended" in energy_type.lower() or hazard_category == "safe_mechanical_lifting":
+    energy_lower = (energy_type or "").lower()
+    if hazard_category == "excavation":
+        pathway_key = "excavation_collapse"
+    elif any(term in energy_lower for term in ["hydraulic", "pneumatic", "pressure", "stored energy"]):
+        pathway_key = "stored_pressure_release"
+    elif "suspended" in energy_lower or hazard_category == "safe_mechanical_lifting":
         pathway_key = "suspended_load"
     elif "electrical" in energy_type.lower() or hazard_category == "energy_isolation":
         pathway_key = "electrical_isolation"

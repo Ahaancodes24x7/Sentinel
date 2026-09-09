@@ -75,16 +75,16 @@ def route_prediction(
         return LOW_CONF_REVIEW, round(calibrated_confidence, 3)
 
     # -----------------------------------------------------------------------
-    # 1. Definite Non-SIF: Strong evidence (low energy, confirmed barrier, or no exposure)
-    # -----------------------------------------------------------------------
-    if not sif_potential and (is_low_energy or barrier_confirmed or no_exposure) and is_consistent and barrier_status != "uncertain":
-        return HIGH_CONF_NON_SIF, round(calibrated_confidence, 3)
-
-    # -----------------------------------------------------------------------
-    # 2. NEEDS_MORE_INFO: Critical field omitted on potential high-energy candidate
+    # 1. Missing decision-critical controls must not be hidden by a model label.
     # -----------------------------------------------------------------------
     if candidate_needs_info or (decision_factors.get("is_high_energy") and barrier_status == "not_mentioned"):
         return NEEDS_MORE_INFO, round(calibrated_confidence, 3)
+
+    # -----------------------------------------------------------------------
+    # 2. Definite Non-SIF: Strong evidence (low energy, confirmed barrier, or no exposure)
+    # -----------------------------------------------------------------------
+    if not sif_potential and (is_low_energy or barrier_confirmed or no_exposure) and is_consistent and barrier_status != "uncertain":
+        return HIGH_CONF_NON_SIF, round(calibrated_confidence, 3)
 
     # -----------------------------------------------------------------------
     # 3. SIF = True pathway
