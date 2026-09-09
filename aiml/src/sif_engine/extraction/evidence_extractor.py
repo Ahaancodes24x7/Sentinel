@@ -90,6 +90,7 @@ EXPOSURE_KEYWORD_GROUPS = {
         "in the line of fire", "in direct path", "crew entered", "vessel entry",
         "tank entry", "inside the vessel", "worker entered", "personnel entered",
         "entered the vessel", "entered the confined space", "worker below",
+        "entered the exclusion zone", "entered the lifting exclusion zone",
         "directly under crane arm", "under crane arm", "beneath the load",
         "underneath the load", "under the suspended load",
         "worker was exposed", "worker was exposed to", "exposed to an energized electrical component",
@@ -120,6 +121,10 @@ NO_EXPOSURE_PHRASES = [
     "all workers evacuated",
     "barricaded with no entry",
     "no personnel exposed",
+    "no worker was exposed",
+    "no workers were exposed",
+    "no worker exposed",
+    "no personnel were exposed",
     "exclusion zone established with no personnel inside",
 ]
 
@@ -150,7 +155,7 @@ UNCERTAINTY_PHRASES = [
     "unverified", "tag was unverified", "scaffold tag was unverified",
     "uncertain", "not clearly confirmed", "unconfirmed", "questionable",
     "partially completed", "incomplete permit", "hesitated before",
-    "validity uncertain", "expired tag"
+    "validity uncertain", "expired tag", "not confirmed", "controls were not confirmed"
 ]
 
 NO_MENTION_PHRASES = [
@@ -335,7 +340,7 @@ def extract_activity(raw_text: str, ontology_activities: Optional[list[str]] = N
 BARRIER_TERMS = [
     "isolation", "permit", "ptw", "exclusion zone", "gas test", "gas testing",
     "gas monitoring", "loto", "lockout", "tagout", "harness", "barricade",
-    "guard", "scaffold tag", "barrier", "sign-off", "lock-out", "tag-out"
+    "guard", "scaffold tag", "fall protection", "lifting controls", "barrier", "sign-off", "lock-out", "tag-out"
 ]
 
 

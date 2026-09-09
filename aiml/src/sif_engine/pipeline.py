@@ -504,6 +504,8 @@ def run_single(
             "text": hazard_field.get("text") if hazard_field else None,
             "span": hazard_field.get("span") if hazard_field else None,
         },
+        "primary_hazard": reasoner_result.get("primary_hazard", best_hazard),
+        "secondary_hazards": reasoner_result.get("secondary_hazards", []),
         "energy": {
             "label": energy_classification.get("label", "unspecified energy"),
             "is_high_energy": decision_factors.get("is_high_energy", False),

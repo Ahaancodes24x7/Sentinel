@@ -13,6 +13,7 @@ Applies deterministic EEI SCL (Safety Culture & Leadership) and IOGP decision ru
 """
 
 from typing import Any, Optional
+from sif_engine.extraction.energy_classifier import evaluate_high_energy_gate
 from sif_engine.reasoning.credible_consequence import evaluate_credible_consequence
 
 
@@ -64,11 +65,15 @@ def reason(
     # -----------------------------------------------------------------------
     # 1. High-Energy Evaluation
     # -----------------------------------------------------------------------
-    is_high_energy = bool(
-        energy_classification.get("high_energy_decision", energy_classification.get("is_high_energy", False))
-    )
+    # Recompute the safety gate from raw evidence at this boundary. A model's
+    # descriptive energy label is informational and must never override it.
+    raw_text = evidence.get("raw_text", "")
+    hazard_info = evidence.get("hazard", {})
+    best_hazard = hazard_info.get("best_category") if isinstance(hazard_info, dict) else None
+    gate = evaluate_high_energy_gate(raw_text, hazard_category=best_hazard)
+    is_high_energy = bool(gate["high_energy_decision"])
     energy_label = energy_classification.get("label", "unspecified energy")
-    energy_source = energy_classification.get("high_energy_source", energy_classification.get("source", "fallback"))
+    energy_source = gate["high_energy_source"]
     lsr_tag_candidate = energy_classification.get("lsr_tag", "Other")
 
     # -----------------------------------------------------------------------
@@ -100,14 +105,13 @@ def reason(
         has_barrier_gap = False
     elif barrier_status == "not_mentioned":
         has_barrier_gap = False
-        candidate_needs_info = True
 
     # -----------------------------------------------------------------------
     # 3. Exposure Evaluation
     # -----------------------------------------------------------------------
     exposure_data = evidence.get("exposure", {})
     exposure_label = exposure_data.get("label", "unspecified")
-    textual_exposure = (evidence.get("raw_text") or "").lower()
+    textual_exposure = raw_text.lower()
     explicit_exposure = any(phrase in textual_exposure for phrase in [
         "worker was exposed", "worker was exposed to", "personnel were exposed",
         "exposed to an energized electrical component", "exposed to electrical energy",
@@ -117,13 +121,16 @@ def reason(
         exposure_label = "direct_proximity"
     has_exposure = exposure_label in ["direct_proximity", "indirect_proximity"]
     is_direct_exposure = exposure_label == "direct_proximity"
+    if barrier_status == "not_mentioned":
+        activity_category = evidence.get("activity", {}).get("category")
+        candidate_needs_info = bool(
+            is_high_energy
+            or (activity_category == "unspecified" and exposure_label in {"unspecified", "unknown"})
+        )
 
     # -----------------------------------------------------------------------
     # 4. Credible Consequence Modeling
     # -----------------------------------------------------------------------
-    hazard_info = evidence.get("hazard", {})
-    best_hazard = hazard_info.get("best_category") if isinstance(hazard_info, dict) else None
-
     consequence_info = evaluate_credible_consequence(
         energy_type=energy_label,
         hazard_category=best_hazard,
@@ -255,9 +262,10 @@ def reason(
                         "confidence": nested.get("confidence", 0.8),
                     })
 
+    detected_hazards = list(hazard_info.get("matches", {}).keys()) if isinstance(hazard_info, dict) else []
     reasoning_steps = [
         {"step": 1, "label": "Activity", "detail": f"Identified activity: {evidence.get('activity', {}).get('text', 'unspecified activity')}"},
-        {"step": 2, "label": "Hazard/Energy", "detail": f"Energy signal: {energy_label}; hazard evidence: {best_hazard or 'not explicitly identified'}"},
+        {"step": 2, "label": "Hazard/Energy", "detail": f"Energy signal: {energy_label}; primary hazard: {best_hazard or 'not explicitly identified'}; detected hazards: {detected_hazards or 'none'}"},
         {"step": 3, "label": "Exposure", "detail": f"Exposure mode: {exposure_label}"},
         {"step": 4, "label": "Barrier", "detail": f"Barrier status: {barrier_status}; gap severity: {gap_severity}"},
         {"step": 5, "label": "Credible consequence", "detail": consequence_info.get("primary_consequence", "No explicit consequence mapped")},
@@ -297,6 +305,8 @@ def reason(
         },
         "environment": evidence.get("environment", {}),
         "credible_consequence": consequence_info,
+        "primary_hazard": best_hazard,
+        "secondary_hazards": [category for category in detected_hazards if category != best_hazard],
         "sif_potential": sif_potential,
         "lsr": lsr_payload,
         "missing_information": missing_information,

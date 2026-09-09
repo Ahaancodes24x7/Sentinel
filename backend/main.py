@@ -9,6 +9,7 @@ Docs at:   http://localhost:8000/docs
 
 import math
 import uuid
+from dataclasses import asdict, is_dataclass
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -283,6 +284,17 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert pipeline dataclasses nested in reasoning evidence to JSON data."""
+    if is_dataclass(value):
+        return _json_safe(asdict(value))
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Ingestion Background Worker
 # ---------------------------------------------------------------------------
@@ -293,7 +305,8 @@ def _process_batch_ingestion(batch_id: str, batch_input: list[dict[str, Any]]):
         results = run_batch(batch_input)
         for item, res in zip(batch_input, results):
             clf = res["classification"]
-            ext = res["extracted_fields"]
+            ext = _json_safe(dict(res["extracted_fields"]))
+            ext["reasoning"] = _json_safe(res.get("reasoning", {}))
             report = ReportModel(
                 report_id=item["report_id"],
                 site=item["site"],
