@@ -2,9 +2,37 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+
+    <title>Sentinel — SIF Precursor Intelligence</title>
+    <meta
+      name="description"
+      content="Sentinel reads free-text HSSE observations and infers whether the situation carried credible fatal potential — showing the energy source, the barrier state and the evidence behind every call."
+    />
+
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0B0D10" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Archivo (display, heavy + slightly condensed), Inter (UI), JetBrains
+         Mono (data). These are the three families index.css names in
+         --font-display / --font-sans / --font-mono; keep them in sync. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    />
+
+    <!-- Paints the ground before the CSS bundle resolves, so the dark console
+         never flashes white on first load. Keep in sync with --color-bg. -->
+    <style>
+      html {
+        background-color: #0b0d10;
+        color-scheme: dark;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

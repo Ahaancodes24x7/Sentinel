@@ -1,233 +1,251 @@
-import React, { useState } from 'react';
-import { Download, FileSpreadsheet, ShieldAlert, Info } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-} from 'recharts';
-import { mockTrends, mockEarlyWarningSignals } from '../data/mockData';
+import { useState } from 'react';
+import { motion } from 'framer-motion';
+import { Activity, TriangleAlert } from 'lucide-react';
+import { Chip, Counter, PanelHead, PulseDot, ScanPanel } from '../components/kinetic';
+import { EmptyPanel, PanelLoading, QueryError } from '../components/common/QueryState';
+import { useOntology, useTrends } from '../api/hooks';
+import { cn } from '../lib/cn';
 
-export const AnalyticsPage: React.FC = () => {
-  const [granularity, setGranularity] = useState<'Daily' | 'Weekly' | 'Monthly' | 'Quarterly'>('Weekly');
+/**
+ * SPC view. The chart draws the CUSUM statistic against its decision interval,
+ * because the honest version of "early warning" is a control chart with a
+ * stated threshold — not a model output labelled "risk".
+ */
+export function AnalyticsPage() {
+  const [site, setSite] = useState<string>('');
+  const [granularity, setGranularity] = useState<'weekly' | 'monthly'>('weekly');
+  const { data, isLoading, error } = useTrends(site || undefined, undefined, granularity);
+  const { data: ontology } = useOntology();
 
-  const handleExportCSV = () => {
-    alert('Exporting safety analytics dataset to CSV file...');
-  };
+  const series = data?.series ?? [];
+  const alerts = data?.alerts ?? [];
+  const cusum = data?.cusum ?? {};
+  const upper = cusum.upper ?? [];
+  const threshold = cusum.threshold ?? 0;
 
-  const handleExportPDF = () => {
-    alert('Generating comprehensive HSE Executive Analytics PDF Report...');
-  };
-
-  const ewSignal = mockEarlyWarningSignals[0];
+  const maxCount = Math.max(...series.map((s) => s.count), 1);
+  const maxCusum = Math.max(...upper, threshold, 1);
+  const alertPeriods = new Set(alerts.map((a) => a.period));
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-xl font-black text-slate-100 uppercase tracking-tight font-telemetry">
-            Early Warning System & Safety Analytics
-          </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Statistical process control (EWMA / CUSUM) baseline anomaly detection and multi-dimensional safety trend analytics.
-          </p>
+          <div className="flex items-center gap-2">
+            <PulseDot tone="info" size={6} />
+            <span className="font-mono text-2xs tracked text-ink-4">
+              REQUIREMENT (F) · TEMPORAL EARLY WARNING
+            </span>
+          </div>
+          <h1 className="mt-1.5 font-display text-4xl text-ink">Trends &amp; SPC</h1>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Granularity selector */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-1 text-xs">
-            {(['Daily', 'Weekly', 'Monthly', 'Quarterly'] as const).map((g) => (
+        <div className="flex gap-2">
+          <select
+            value={site}
+            onChange={(e) => setSite(e.target.value)}
+            className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-xs text-ink focus:border-hivis-edge focus:outline-none"
+          >
+            <option value="">All sites</option>
+            {(ontology?.sites ?? []).map((s) => (
+              <option key={s.name} value={s.name}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          <div className="flex rounded-md border border-line bg-surface-2 p-0.5">
+            {(['weekly', 'monthly'] as const).map((g) => (
               <button
                 key={g}
+                type="button"
                 onClick={() => setGranularity(g)}
-                className={`px-3 py-1 rounded font-telemetry font-bold transition-all ${granularity === g ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
+                className={cn(
+                  'rounded-sm px-3 py-1 font-mono text-2xs tracked transition-colors',
+                  granularity === g ? 'bg-surface-hi text-ink' : 'text-ink-3 hover:text-ink',
+                )}
               >
-                {g}
+                {g.toUpperCase()}
               </button>
             ))}
           </div>
-
-          <button
-            onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 font-telemetry transition-colors"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-            Export CSV
-          </button>
-
-          <button
-            onClick={handleExportPDF}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-lg font-telemetry transition-all"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export PDF
-          </button>
         </div>
       </div>
 
-      {/* 1. EARLY WARNING SYSTEM HERO PANEL (CUSUM / EWMA) */}
-      <div className="bg-slate-900/90 border border-amber-500/30 rounded-xl p-5 shadow-2xl space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div className="flex items-center space-x-2">
-            <span className="p-1.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
-              <ShieldAlert className="w-4 h-4" />
-            </span>
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-100 uppercase tracking-wider font-telemetry">
-                Early Warning Baseline Anomaly System
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                CUSUM statistical baseline alerting — detecting unusual spikes in barrier degradation before actual incidents occur.
-              </p>
-            </div>
-          </div>
-          <span className="text-[11px] font-telemetry font-bold text-amber-300 bg-amber-500/10 px-3 py-1 rounded border border-amber-500/30">
-            EWMA / CUSUM Engine Active
-          </span>
+      {/* The honesty statement, rendered adjacent to the chart, not in a tooltip */}
+      {data?.method_note && (
+        <div className="flex items-start gap-2 rounded-panel border border-info-edge bg-info-wash px-4 py-2.5">
+          <Activity className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" strokeWidth={2} />
+          <p className="text-xs text-ink-2">{data.method_note}</p>
         </div>
+      )}
 
-        {/* Signal breakdown card */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-3 font-telemetry">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-bold text-amber-400 uppercase">Status Signal</span>
-              <span className="px-2.5 py-0.5 rounded text-xs font-black bg-red-500/10 text-red-400 border border-red-500/30">
-                UNUSUAL INCREASE
-              </span>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs text-slate-400">Target Barrier & Asset:</div>
-              <div className="text-sm font-extrabold text-slate-100">{ewSignal.barrier}</div>
-              <div className="text-xs text-blue-400 font-bold">{ewSignal.site}</div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80 text-xs">
-              <div className="bg-slate-900 p-2 rounded">
-                <span className="text-slate-500 block text-[10px]">HISTORICAL BASELINE</span>
-                <span className="font-bold text-slate-200">{ewSignal.baseline_rate} / week</span>
-              </div>
-              <div className="bg-slate-900 p-2 rounded">
-                <span className="text-slate-500 block text-[10px]">CURRENT OBSERVED</span>
-                <span className="font-extrabold text-red-400">{ewSignal.current_rate} / week</span>
-              </div>
-            </div>
-
-            <div className="p-2.5 rounded bg-red-950/20 border border-red-900/40 text-xs text-red-200 space-y-1">
-              <div className="font-bold text-red-400 uppercase">Recommended HSE Intervention</div>
-              <p className="text-[11px] leading-snug">{ewSignal.recommendation}</p>
-            </div>
-          </div>
-
-          {/* EWMA Baseline Chart (2 cols) */}
-          <div className="lg:col-span-2 p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-2">
-            <div className="flex justify-between items-center text-xs font-telemetry mb-2">
-              <span className="text-slate-300 font-bold uppercase">Weekly Barrier Failure Rate vs. Baseline</span>
-              <span className="text-red-400 font-bold">+131% Baseline Exceedance</span>
-            </div>
-
-            <div className="h-48 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={ewSignal.historical_data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f293d" vertical={false} />
-                  <XAxis dataKey="date" stroke="#64748b" tick={{ fontSize: 11 }} />
-                  <YAxis stroke="#64748b" tick={{ fontSize: 11 }} />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className="rounded bg-slate-900 border border-slate-700 p-2 text-xs font-telemetry">
-                            <div className="font-bold text-slate-200">{label}</div>
-                            <div className="text-slate-400">Baseline Rate: {payload[0].value}</div>
-                            <div className="text-red-400 font-bold">Actual Observed: {payload[1].value}</div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
-                  <Line type="monotone" dataKey="baseline" stroke="#64748b" strokeDasharray="5 5" name="Historical CUSUM Baseline" strokeWidth={2} />
-                  <Line type="monotone" dataKey="actual" stroke="#ef4444" name="Observed Barrier Failures" strokeWidth={3} dot={{ r: 4 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Disclaimer */}
-            <div className="text-[11px] text-slate-400 italic pt-1 border-t border-slate-800 flex items-center space-x-1.5">
-              <Info className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-              <span>
-                "This is an early-warning signal for unusual reporting activity, not a prediction of a future fatality."
-              </span>
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Tile label="PERIODS" value={series.length} />
+        <Tile label="SPC SIGNALS" value={alerts.length} tone="critical" />
+        <Tile
+          label="BASELINE MEAN"
+          value={Number((cusum.baseline_mean ?? 0).toFixed(1))}
+          decimals={1}
+        />
+        <Tile label="DECISION INTERVAL" value={Number(threshold.toFixed(1))} decimals={1} />
       </div>
 
-      {/* MULTI-DIMENSIONAL TRENDS */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-xl bg-slate-900/90 border border-slate-800 p-5 shadow-2xl space-y-4">
-          <div className="border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-100 font-telemetry">
-              Total Reports vs SIF Precursor Rate ({granularity})
-            </h3>
-            <p className="text-xs text-slate-400">Multi-period trend analysis</p>
+      <ScanPanel>
+        <PanelHead
+          title={`PRECURSOR COUNT · ${granularity.toUpperCase()}`}
+          sub="Red columns are periods where the control chart signalled"
+          tone="critical"
+        />
+        {isLoading ? (
+          <PanelLoading rows={4} />
+        ) : error ? (
+          <QueryError error={error} />
+        ) : series.length === 0 ? (
+          <EmptyPanel title="No time series available" />
+        ) : (
+          <div className="p-4">
+            <div className="flex h-48 items-end gap-[2px]">
+              {series.map((point, i) => {
+                const flagged = alertPeriods.has(point.period);
+                return (
+                  <motion.div
+                    key={point.period}
+                    className="group relative min-w-[3px] flex-1"
+                    initial={{ height: 0 }}
+                    animate={{ height: `${(point.count / maxCount) * 100}%` }}
+                    transition={{ delay: Math.min(i * 0.008, 0.5), duration: 0.5 }}
+                    title={`${point.period} · ${point.count} precursors of ${point.total_reports} reports (${(point.precursor_rate * 100).toFixed(0)}%)`}
+                  >
+                    <div
+                      className={cn(
+                        'h-full w-full rounded-t-[2px]',
+                        flagged ? 'bg-critical' : 'bg-hivis/50 group-hover:bg-hivis',
+                      )}
+                    />
+                  </motion.div>
+                );
+              })}
+            </div>
+            <div className="mt-1.5 flex justify-between font-mono text-2xs text-ink-4">
+              <span>{series[0]?.period}</span>
+              <span>{series[series.length - 1]?.period}</span>
+            </div>
           </div>
+        )}
+      </ScanPanel>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={mockTrends} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f293d" vertical={false} />
-                <XAxis dataKey="period" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis stroke="#64748b" tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="total" fill="#3b82f6" opacity={0.6} name="Total Reports" />
-                <Bar dataKey="sif_count" fill="#ef4444" name="SIF Precursors" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-slate-900/90 border border-slate-800 p-5 shadow-2xl space-y-4">
-          <div className="border-b border-slate-800 pb-3">
-            <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-100 font-telemetry">
-              High Risk Precursor Distribution
-            </h3>
-            <p className="text-xs text-slate-400">Breakdown by Life-Saving Rule category</p>
-          </div>
-
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                layout="vertical"
-                data={[
-                  { category: 'Working at Height', count: 127 },
-                  { category: 'Energy Isolation', count: 91 },
-                  { category: 'Permit Verification', count: 74 },
-                  { category: 'Line of Fire', count: 63 },
-                  { category: 'Confined Space', count: 34 },
-                  { category: 'Hot Work', count: 28 },
-                ]}
-                margin={{ top: 10, right: 20, left: 40, bottom: 0 }}
+      {/* CUSUM statistic against its decision interval */}
+      {upper.length > 0 && (
+        <ScanPanel>
+          <PanelHead
+            title="CUSUM STATISTIC"
+            sub={`Cumulative deviation above baseline · signals when it crosses ${threshold.toFixed(1)}`}
+            tone="info"
+          />
+          <div className="p-4">
+            <div className="relative h-32">
+              {/* threshold line */}
+              <div
+                className="absolute left-0 right-0 border-t border-dashed border-critical"
+                style={{ bottom: `${(threshold / maxCusum) * 100}%` }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f293d" horizontal={false} />
-                <XAxis type="number" stroke="#64748b" tick={{ fontSize: 11 }} />
-                <YAxis dataKey="category" type="category" stroke="#94a3b8" tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="count" fill="#f59e0b" radius={[0, 4, 4, 0]} name="Precursor Counts" />
-              </BarChart>
-            </ResponsiveContainer>
+                <span className="absolute -top-4 right-0 font-mono text-2xs text-critical">
+                  h = {threshold.toFixed(1)}
+                </span>
+              </div>
+              <div className="flex h-full items-end gap-[2px]">
+                {upper.map((v, i) => (
+                  <motion.div
+                    key={i}
+                    className="min-w-[3px] flex-1"
+                    initial={{ height: 0 }}
+                    animate={{ height: `${(v / maxCusum) * 100}%` }}
+                    transition={{ delay: Math.min(i * 0.008, 0.5), duration: 0.4 }}
+                  >
+                    <div
+                      className={cn(
+                        'h-full w-full rounded-t-[1px]',
+                        v > threshold ? 'bg-critical' : 'bg-info/45',
+                      )}
+                    />
+                  </motion.div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </ScanPanel>
+      )}
+
+      <ScanPanel>
+        <PanelHead
+          title="RAISED SIGNALS"
+          tone="critical"
+          right={<Chip tone={alerts.length ? 'critical' : 'low'}>{alerts.length}</Chip>}
+        />
+        {alerts.length === 0 ? (
+          <EmptyPanel title="Process in control" message="No unusual increases detected." />
+        ) : (
+          <div className="divide-y divide-line-faint">
+            {alerts.map((alert, i) => (
+              <motion.div
+                key={`${alert.period}-${alert.method}`}
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }}
+                className="flex items-start gap-3 px-4 py-3"
+              >
+                <TriangleAlert
+                  className={cn(
+                    'mt-0.5 h-4 w-4 shrink-0',
+                    alert.severity === 'high' ? 'text-critical' : 'text-high',
+                  )}
+                  strokeWidth={2}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs tabular text-ink">{alert.period}</span>
+                    <Chip tone="info">{alert.method}</Chip>
+                    <Chip tone={alert.severity === 'high' ? 'critical' : 'high'}>
+                      {alert.severity.toUpperCase()}
+                    </Chip>
+                  </div>
+                  <p className="mt-1 text-sm text-ink-2">{alert.message}</p>
+                  <div className="mt-0.5 font-mono text-2xs text-ink-4">
+                    observed {alert.count.toFixed(0)} · baseline{' '}
+                    {alert.baseline_mean.toFixed(1)} · threshold {alert.threshold.toFixed(1)}
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </ScanPanel>
     </div>
   );
-};
+}
+
+function Tile({
+  label,
+  value,
+  tone = 'hivis',
+  decimals = 0,
+}: {
+  label: string;
+  value: number;
+  tone?: 'hivis' | 'critical';
+  decimals?: number;
+}) {
+  return (
+    <ScanPanel className="p-3">
+      <div className="font-mono text-[9px] tracked text-ink-4">{label}</div>
+      <div
+        className={cn(
+          'mt-1 font-display text-3xl',
+          tone === 'critical' ? 'text-critical' : 'text-ink',
+        )}
+      >
+        <Counter value={value} decimals={decimals} />
+      </div>
+    </ScanPanel>
+  );
+}

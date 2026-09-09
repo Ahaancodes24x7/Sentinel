@@ -13,7 +13,7 @@ from sif_engine.preprocessing import preprocess_report
 
 
 class Baseline2Model:
-    MODEL_VERSION = "baseline2-v0.3"
+    MODEL_VERSION = "sentinel-v2.0"
 
     def __init__(self, models_dir: Optional[Path] = None):
         if models_dir is None:
@@ -49,6 +49,20 @@ class Baseline2Model:
     def is_loaded(self) -> bool:
         return self._sif_artifact is not None and self._lsr_artifact is not None
 
+    @staticmethod
+    def _apply(artifact: dict[str, Any], text: str):
+        """Transform + predict, supporting both artifact layouts.
+
+        v0.3 artifacts stored a separate fitted vectorizer and a bare
+        estimator. v2.0 artifacts store one calibrated sklearn Pipeline that
+        takes raw text directly, so `vectorizer` is None. Supporting both means
+        an older checkout keeps working instead of failing at load time.
+        """
+        vectorizer = artifact.get("vectorizer")
+        model = artifact["model"]
+        features = vectorizer.transform([text]) if vectorizer is not None else [text]
+        return model, features
+
     def predict(self, text: str) -> dict[str, Any]:
         self.load()
         assert self._sif_artifact is not None
@@ -56,33 +70,30 @@ class Baseline2Model:
 
         clean_text = preprocess_report(text)
 
-        # SIF inference
-        sif_vec = self._sif_artifact["vectorizer"]
-        sif_clf = self._sif_artifact["model"]
+        # ---- SIF inference ----
+        sif_clf, X_sif = self._apply(self._sif_artifact, clean_text)
+        sif_prob = float(sif_clf.predict_proba(X_sif)[0][1])
 
-        X_sif = sif_vec.transform([clean_text])
-        prob_array = sif_clf.predict_proba(X_sif)[0]
-        sif_prob = float(prob_array[1])
-        sif_pred = int(sif_clf.predict(X_sif)[0])
-        sif_bool = bool(sif_pred == 1)
+        # Threshold is the calibrated operating point chosen on validation for
+        # >=90% recall, NOT 0.5. Falling back to 0.5 would silently drop true
+        # precursors, which is the one error this system must not make.
+        threshold = float(self._sif_artifact.get("threshold", 0.5))
+        sif_bool = sif_prob >= threshold
 
-        # 4-bucket routing
+        # ---- 4-bucket routing ----
         if sif_bool and sif_prob >= 0.75:
             bucket = "HIGH_CONF_SIF"
-        elif sif_bool and sif_prob < 0.75:
+        elif sif_bool:
             bucket = "LOW_CONF_REVIEW"
-        elif not sif_bool and sif_prob <= 0.25:
+        elif sif_prob <= 0.25:
             bucket = "HIGH_CONF_NON_SIF"
         else:
             bucket = "LOW_CONF_REVIEW"
 
-        # Confidence is calibrated class probability
-        confidence = round(sif_prob if sif_bool else (1.0 - sif_prob), 2)
+        confidence = round(sif_prob if sif_bool else (1.0 - sif_prob), 3)
 
-        # LSR tagging
-        lsr_vec = self._lsr_artifact["vectorizer"]
-        lsr_clf = self._lsr_artifact["model"]
-        X_lsr = lsr_vec.transform([clean_text])
+        # ---- LSR tagging ----
+        lsr_clf, X_lsr = self._apply(self._lsr_artifact, clean_text)
         lsr_tag = str(lsr_clf.predict(X_lsr)[0])
 
         justification = (
@@ -97,7 +108,8 @@ class Baseline2Model:
             "bucket": bucket,
             "lsr_tag": lsr_tag,
             "justification": justification,
-            "model_version": self.MODEL_VERSION,
+            "model_version": self._sif_artifact.get("model_version", self.MODEL_VERSION),
+            "threshold": threshold,
             "raw_probability": round(sif_prob, 4),
             "preprocessed_text": clean_text,
         }

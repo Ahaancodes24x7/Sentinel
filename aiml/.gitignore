@@ -4,7 +4,16 @@ __pycache__/
 .venv/
 *.egg-info/
 data/raw/*
-models/*.pkl
 models/*.pt
 logs/*
 !**/.gitkeep
+
+# The fine-tuned DistilBERT NER weights are ~254 MB, over GitHub's 100 MB
+# per-file hard limit, so they are NOT committed. Regenerate in ~48 min on CPU:
+#     python scripts/train_ner.py --samples 9000 --epochs 2
+# Without it the pipeline falls back to the rule-based extractor and reports
+# source="rule_fallback" rather than silently pretending it used the model.
+models/ner/
+
+# The scikit-learn artefacts (all under 4 MB) and the 25k synthetic corpus ARE
+# committed, so a fresh clone can run the console without retraining anything.

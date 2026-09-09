@@ -28,6 +28,24 @@ HAZARD_ENERGY_ALIGNMENT: dict[str, set[str]] = {
 }
 
 
+def _is_high_energy(energy_type) -> bool:
+    """Ontology lookup, tolerant of the hazard-category vocabulary."""
+    if not energy_type:
+        return False
+    try:
+        from sif_engine.data_generation.ontology import ENERGY_TYPES, high_energy
+
+        if energy_type in ENERGY_TYPES:
+            return high_energy(energy_type)
+        # hazard categories such as "energy_isolation" map through the LSR table
+        from sif_engine.extraction.energy_classifier import HAZARD_TO_ENERGY_MAP
+
+        mapped = HAZARD_TO_ENERGY_MAP.get(str(energy_type))
+        return high_energy(mapped) if mapped else False
+    except Exception:
+        return False
+
+
 def validate_consistency(
     evidence: dict[str, Any],
     energy_classification: dict[str, Any],
@@ -146,15 +164,31 @@ def validate_consistency(
         if energy_label in expected_energies:
             aligned.append(f"ALIGNED_HAZARD_ENERGY: hazard '{hazard_cat}' aligns with energy '{energy_label}'.")
         elif expected_energies:
+            message = (
+                f"ENERGY_HAZARD_DISAGREEMENT: Energy classifier predicted "
+                f"'{energy_label}', but extracted hazard evidence indicates '{hazard_cat}'."
+            )
+            # A disagreement about WHICH high-energy type is present does not
+            # undermine the SIF decision - that decision turns on high-energy
+            # yes/no, barrier state and exposure, all of which are unaffected.
+            # Treating it as a hard contradiction sent genuinely decidable
+            # reports to the ambiguity queue and masked the barrier-silence
+            # signal underneath. It stays a warning with a confidence penalty;
+            # only a disagreement that crosses the high/low energy boundary is
+            # a real contradiction, because that one does flip the verdict.
+            both_high_energy = _is_high_energy(energy_label) and any(
+                _is_high_energy(candidate) for candidate in expected_energies
+            )
             detail = {
                 "type": "ENERGY_HAZARD_DISAGREEMENT",
-                "message": f"ENERGY_HAZARD_DISAGREEMENT: Energy classifier predicted '{energy_label}', but extracted hazard evidence indicates '{hazard_cat}'.",
+                "message": message,
                 "conflicting_fields": ["energy_classification.label", "hazard.best_category"],
                 "penalty": 0.15,
             }
-            contradiction_details.append(detail)
-            warnings.append(detail["message"])
+            warnings.append(message)
             penalty += 0.15
+            if not both_high_energy:
+                contradiction_details.append(detail)
 
 
     # -----------------------------------------------------------------------

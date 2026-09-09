@@ -1,180 +1,211 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Eye } from 'lucide-react';
-import { RiskBadge } from '../components/common/RiskBadge';
-import { mockReports } from '../data/mockData';
-import { reportsService } from '../services/reportsService';
-import type { ReportItem, Bucket } from '../types/sentinel';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { ArrowRight, Inbox, Timer } from 'lucide-react';
+import {
+  Bar,
+  Chip,
+  Counter,
+  LiveFeed,
+  PanelHead,
+  PulseDot,
+  ScanPanel,
+  type Tone,
+} from '../components/kinetic';
+import { EmptyPanel, NoDataYet, PanelLoading, QueryError } from '../components/common/QueryState';
+import { useReviewQueue, useSummary } from '../api/hooks';
+import { BUCKET_META, type Bucket } from '../api/types';
+import { cn } from '../lib/cn';
 
-export const ReviewQueuePage: React.FC = () => {
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const initialBucket = (searchParams.get('bucket') as Bucket) || 'LOW_CONF_REVIEW';
+const BUCKET_TONE: Record<Bucket, Tone> = {
+  HIGH_CONF_SIF: 'critical',
+  LOW_CONF_REVIEW: 'high',
+  NEEDS_MORE_INFO: 'medium',
+  HIGH_CONF_NON_SIF: 'low',
+};
 
-  const [activeBucket, setActiveBucket] = useState<Bucket | 'ALL'>(initialBucket);
-  const [queue, setQueue] = useState<ReportItem[]>(mockReports);
-  const [notes, setNotes] = useState<{ [key: string]: string }>({});
+type SortKey = 'oldest' | 'newest' | 'confidence_asc';
 
-  useEffect(() => {
-    const b = searchParams.get('bucket') as Bucket;
-    if (b) setActiveBucket(b);
-  }, [searchParams]);
+export function ReviewQueuePage() {
+  const [sort, setSort] = useState<SortKey>('oldest');
+  const { data, isLoading, error, isFetching } = useReviewQueue(undefined, sort, 60);
+  const { data: summary } = useSummary();
 
-  const filteredQueue = queue.filter((r) => {
-    if (activeBucket === 'ALL') return true;
-    return r.bucket === activeBucket;
-  });
+  const items = data?.items ?? [];
+  const counts = (summary?.bucket_counts as Record<string, number>) ?? {};
 
-  const handleAction = async (reportId: string, action: 'confirm' | 'correct' | 'reject' | 'info') => {
-    const note = notes[reportId] || '';
-    await reportsService.submitReviewAction(reportId, action, note);
-    setQueue((prev) => prev.filter((r) => r.report_id !== reportId));
-    alert(`Report ${reportId} action [${action.toUpperCase()}] recorded and added to retraining queue!`);
-  };
+  const priority = items.filter((r) => r.bucket === 'HIGH_CONF_SIF');
+  const standard = items.filter((r) => r.bucket === 'LOW_CONF_REVIEW');
+  const incomplete = items.filter((r) => r.bucket === 'NEEDS_MORE_INFO');
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-              <Eye className="w-5 h-5" />
-            </div>
-            <h2 className="text-xl font-black text-slate-100 uppercase tracking-tight font-telemetry">
-              HSE Review Queue — 4-Bucket Triage
-            </h2>
+            <PulseDot tone="critical" size={7} />
+            <span className="font-mono text-2xs tracked text-ink-4">
+              HUMAN-IN-THE-LOOP · LIVE QUEUE
+            </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Human-in-the-Loop review for auto-routed high SIF precursors, low-confidence predictions, and missing field reports.
+          <h1 className="mt-1.5 font-display text-4xl text-ink">Review Queue</h1>
+          <p className="mt-1.5 max-w-2xl text-sm text-ink-3">
+            Recall-optimised routing. The system accepts extra review rather than risk missing a
+            precursor — a false negative here is categorically worse than a false positive.
           </p>
         </div>
 
-        <span className="text-xs font-telemetry font-bold text-purple-300 bg-purple-500/10 px-3 py-1.5 rounded-lg border border-purple-500/20 self-start sm:self-auto">
-          2-Reviewer Agreement Active
-        </span>
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as SortKey)}
+          className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-xs text-ink focus:border-hivis-edge focus:outline-none"
+        >
+          <option value="oldest">Oldest first</option>
+          <option value="newest">Newest first</option>
+          <option value="confidence_asc">Lowest confidence first</option>
+        </select>
       </div>
 
-      {/* 4-BUCKET TABS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-telemetry">
-        <button
-          onClick={() => setActiveBucket('HIGH_CONF_SIF')}
-          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${activeBucket === 'HIGH_CONF_SIF'
-              ? 'bg-red-950/40 border-red-500 ring-2 ring-red-500/30'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-            }`}
-        >
-          <div className="text-[10px] font-bold text-red-400 uppercase">1. HIGH-CONF SIF</div>
-          <div className="text-xl font-black text-slate-100 mt-0.5">48 Items</div>
-          <div className="text-[10px] text-slate-400">Auto-routed for priority review</div>
-        </button>
-
-        <button
-          onClick={() => setActiveBucket('LOW_CONF_REVIEW')}
-          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${activeBucket === 'LOW_CONF_REVIEW'
-              ? 'bg-amber-950/40 border-amber-500 ring-2 ring-amber-500/30'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-            }`}
-        >
-          <div className="text-[10px] font-bold text-amber-400 uppercase">2. AMBIGUOUS / LOW-CONF</div>
-          <div className="text-xl font-black text-slate-100 mt-0.5">16 Items</div>
-          <div className="text-[10px] text-slate-400">Requires human verification</div>
-        </button>
-
-        <button
-          onClick={() => setActiveBucket('NON_SIF')}
-          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${activeBucket === 'NON_SIF'
-              ? 'bg-emerald-950/40 border-emerald-500 ring-2 ring-emerald-500/30'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-            }`}
-        >
-          <div className="text-[10px] font-bold text-emerald-400 uppercase">3. HIGH-CONF NON-SIF</div>
-          <div className="text-xl font-black text-slate-100 mt-0.5">8,914 Items</div>
-          <div className="text-[10px] text-slate-400">Sampled QA audit</div>
-        </button>
-
-        <button
-          onClick={() => setActiveBucket('NEEDS_MORE_INFO')}
-          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${activeBucket === 'NEEDS_MORE_INFO'
-              ? 'bg-slate-800 border-slate-400 ring-2 ring-slate-400/30'
-              : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-            }`}
-        >
-          <div className="text-[10px] font-bold text-slate-300 uppercase">4. INSUFFICIENT DETAIL</div>
-          <div className="text-xl font-black text-slate-100 mt-0.5">127 Items</div>
-          <div className="text-[10px] text-slate-400">Missing barrier/location data</div>
-        </button>
+      {/* Bucket summary strip */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <QueueTile
+          label="PRIORITY REVIEW"
+          detail="High-confidence precursor"
+          value={counts.HIGH_CONF_SIF ?? priority.length}
+          tone="critical"
+        />
+        <QueueTile
+          label="STANDARD REVIEW"
+          detail="Candidate with unverified evidence"
+          value={counts.LOW_CONF_REVIEW ?? standard.length}
+          tone="high"
+        />
+        <QueueTile
+          label="NEEDS MORE DETAIL"
+          detail="Report quality gap, not a verdict"
+          value={counts.NEEDS_MORE_INFO ?? incomplete.length}
+          tone="medium"
+        />
       </div>
 
-      {/* Queue Items List */}
-      <div className="space-y-4">
-        {filteredQueue.length > 0 ? (
-          filteredQueue.map((item) => (
-            <div
-              key={item.report_id}
-              className="rounded-xl bg-slate-900/90 border border-slate-800 p-5 space-y-4 shadow-xl hover:border-slate-700 transition-all"
-            >
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => navigate(`/reports/${item.report_id}`)}
-                    className="font-telemetry font-bold text-xs text-blue-400 hover:text-blue-300 bg-blue-500/10 px-2.5 py-1 rounded border border-blue-500/20"
-                  >
-                    {item.report_id}
-                  </button>
-                  <span className="text-xs font-bold text-slate-200">{item.site}</span>
-                  <RiskBadge level={item.risk_level} size="sm" />
-                </div>
-                <span className="text-xs font-telemetry text-amber-400 font-bold">
-                  Confidence: {Math.round((item.classification?.confidence || 0.85) * 100)}%
-                </span>
-              </div>
+      <ScanPanel className="flex flex-col">
+        <PanelHead
+          title="TRIAGE STREAM"
+          sub="Oldest-first by default so nothing ages out unseen"
+          tone="critical"
+          right={
+            isFetching ? (
+              <span className="flex items-center gap-1.5">
+                <PulseDot tone="hivis" size={5} />
+                <span className="font-mono text-2xs tracked text-ink-4">POLLING</span>
+              </span>
+            ) : (
+              <Chip tone="neutral">{data?.total ?? 0} QUEUED</Chip>
+            )
+          }
+        />
 
-              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 font-mono leading-relaxed">
-                {item.report_text}
-              </div>
-
-              <div className="p-3 rounded-lg bg-blue-950/30 border border-blue-900/40 text-xs text-blue-300 font-telemetry">
-                <strong>AI Justification:</strong> {item.classification?.justification || 'Flagged due to unverified barrier control.'}
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-                <input
-                  type="text"
-                  placeholder="Enter review reason / technical notes..."
-                  value={notes[item.report_id] || ''}
-                  onChange={(e) => setNotes({ ...notes, [item.report_id]: e.target.value })}
-                  className="flex-1 w-full p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-200 focus:outline-none font-mono"
-                />
-                <div className="flex items-center gap-2 w-full sm:w-auto font-telemetry">
-                  <button
-                    onClick={() => handleAction(item.report_id, 'confirm')}
-                    className="flex-1 sm:flex-none px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md"
-                  >
-                    Confirm SIF
-                  </button>
-                  <button
-                    onClick={() => handleAction(item.report_id, 'correct')}
-                    className="flex-1 sm:flex-none px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md"
-                  >
-                    Correct
-                  </button>
-                  <button
-                    onClick={() => handleAction(item.report_id, 'reject')}
-                    className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
+        {isLoading ? (
+          <PanelLoading rows={8} />
+        ) : error ? (
+          <QueryError error={error} />
+        ) : (data?.total ?? 0) === 0 ? (
+          <NoDataYet />
+        ) : items.length === 0 ? (
+          <EmptyPanel icon={Inbox} title="Queue clear" message="Nothing is waiting for review." />
         ) : (
-          <div className="p-8 text-center bg-slate-900/60 rounded-xl border border-slate-800 text-slate-400 font-telemetry">
-            No pending items in the selected queue bucket ({activeBucket}). All observations reviewed!
-          </div>
+          <LiveFeed
+            items={items}
+            max={40}
+            keyFor={(r) => r.report_id}
+            renderItem={(r) => (
+              <Link
+                to={`/reports/${r.report_id}`}
+                className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+              >
+                <PulseDot
+                  tone={BUCKET_TONE[r.bucket]}
+                  size={7}
+                  live={r.bucket === 'HIGH_CONF_SIF'}
+                />
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs text-ink group-hover:text-hivis">
+                      {r.report_id}
+                    </span>
+                    <Chip tone={BUCKET_TONE[r.bucket]}>
+                      {BUCKET_META[r.bucket]?.short ?? r.bucket}
+                    </Chip>
+                    {r.lsr_tag && r.lsr_tag !== 'N/A' && <Chip tone="hivis">{r.lsr_tag}</Chip>}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 font-mono text-2xs text-ink-4">
+                    <span>{r.site}</span>
+                    <span>·</span>
+                    <span className="flex items-center gap-1">
+                      <Timer className="h-2.5 w-2.5" />
+                      {r.timestamp?.slice(0, 10)}
+                    </span>
+                  </div>
+                </div>
+
+                {typeof r.confidence === 'number' && (
+                  <div className="hidden w-20 shrink-0 sm:block">
+                    <div className="text-right font-mono text-2xs tabular text-ink-3">
+                      {(r.confidence * 100).toFixed(0)}%
+                    </div>
+                    <Bar value={r.confidence} tone={BUCKET_TONE[r.bucket]} height={3} className="mt-1" />
+                  </div>
+                )}
+
+                <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-4 transition-transform group-hover:translate-x-0.5 group-hover:text-hivis" />
+              </Link>
+            )}
+          />
         )}
-      </div>
+      </ScanPanel>
+
+      <p className="text-xs text-ink-4">
+        Reviewer decisions are logged with actor and timestamp. Corrections enter a retraining
+        queue and are only promoted into the training set once two independent reviewers agree —
+        a single mislabel cannot degrade the model.
+      </p>
     </div>
   );
-};
+}
+
+function QueueTile({
+  label,
+  detail,
+  value,
+  tone,
+}: {
+  label: string;
+  detail: string;
+  value: number;
+  tone: Tone;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={cn(
+        'rounded-panel border p-4',
+        tone === 'critical'
+          ? 'border-critical-edge bg-critical-wash'
+          : tone === 'high'
+            ? 'border-high-edge bg-high-wash'
+            : 'border-medium-edge bg-medium-wash',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <PulseDot tone={tone} size={6} live={tone === 'critical'} />
+        <span className="font-mono text-2xs tracked text-ink-2">{label}</span>
+      </div>
+      <div className="mt-1.5 font-display text-4xl text-ink">
+        <Counter value={value} />
+      </div>
+      <div className="mt-0.5 text-xs text-ink-3">{detail}</div>
+    </motion.div>
+  );
+}

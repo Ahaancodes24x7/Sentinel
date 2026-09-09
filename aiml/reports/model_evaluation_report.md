@@ -1,101 +1,140 @@
-# PS 26165 — Baseline Model Evaluation Report (raw vs. Stage-0-preprocessed)
+# Sentinel â€” Model Evaluation Report
 
-Dataset: `synthetic_uauc_reports.csv` (SYNTHETIC — not OIL production data)
+Model version `sentinel-v2.0` Â· 262s total train+eval time.
 
-Total reports: 3000 | Train: 2400 | Test: 600
+> **Validation status: internal consistency only.** Every number below is
+> measured against a held-out split of the *synthetic* corpus and therefore
+> validates the pipeline against its own generation assumptions. It is not
+> production validation. Real acceptance criteria can only be set with OIL
+> HSE SMEs after a pilot on real exported data.
 
-Base rate of SIF-potential in test set: 0.318
+## Why not accuracy
 
-Every model below is run twice on identical train/test splits: once on `report_text` (raw, noisy — abbreviations, typos, code-mixed phrasing) and once on `report_text_preprocessed` (after Stage 0 cleanup). This measures preprocessing's actual contribution instead of assuming it.
+The positive class is 43.2% of the corpus and a **false negative
+(a missed SIF precursor) is categorically worse than a false positive (one
+extra human review)**. So the headline metric is recall at a stated
+review-queue size, with F2 (recall weighted 2x) as the summary score â€” the
+same choice the VelocityEHS PSIF paper made, for the same reason.
 
+The corpus also carries 2.8% deliberate label noise, so a
+perfect score would itself be evidence of overfitting rather than success.
 
-## Baseline 1 — Keyword/Rule Classifier (no ML)
+## Dataset
 
+- Total: **25,000** synthetic reports
+- Split: train 15,000 / val 5,000 / test 5,000 (stratified)
+- SIF-potential rate: 43.2%
 
-### Baseline 1 — Keyword/Rule Classifier — RAW text
+## Baseline ladder
 
-Precision: 0.839 | Recall: 0.408 | F1: 0.549
+Built simplest-first so the marginal value of each added layer is measured,
+not assumed.
 
-Confusion matrix [[TN,FP],[FN,TP]]: [[394, 15], [113, 78]]
+| Model | Recall | Precision | F2 | PR-AUC | Review queue |
+|---|---|---|---|---|---|
+| B1 keyword / rule | 0.231 | 0.827 | 0.269 | â€” | 12.0% |
+| B2 TF-IDF + LogReg | 0.954 | 0.947 | 0.952 | 0.958 | 43.5% |
+| B3 embedding kNN | 0.492 | 0.643 | 0.516 | 0.665 | 33.0% |
+| **B4 calibrated word+char (production)** | 0.914 | 0.967 | 0.924 | 0.959 | 40.8% |
+| B5 hybrid extraction + SCL reasoner | 0.848 | 0.734 | 0.822 | â€” | 49.4% |
 
+## Production model operating point
 
-### Baseline 1 — Keyword/Rule Classifier — PREPROCESSED text
+- Threshold **0.738**, selected on the VALIDATION split
+  as the highest threshold still achieving >=90% recall, then applied
+  unchanged to test. Selecting it on test would have been leakage.
+- Test recall **91.4%** at a review queue of **40.8%** of all reports.
+- PR-AUC 0.959 Â· Brier 0.0397
 
-Precision: 0.808 | Recall: 0.508 | F1: 0.624
+### Calibration
 
-Confusion matrix [[TN,FP],[FN,TP]]: [[386, 23], [94, 97]]
+Expected Calibration Error **0.0339**.
+This matters because the 4-bucket review routing is driven by the
+confidence score: a model whose "0.9" is right 60% of the time sends the
+wrong reports to the priority queue no matter how well it ranks.
 
+### Outcome-shortcut check
 
-**Preprocessing impact on Baseline 1 recall:** 0.408 -> 0.508 (+9.9 points). Keyword rules are brittle to jargon/typos by construction, so this is exactly where preprocessing should matter most for a rule-based system.
-
-
-## Baseline 2 — TF-IDF + Logistic Regression (SIF-potential) — FIRST REAL AI/ML MODEL
-
-
-### Baseline 2 — TF-IDF + Logistic Regression — RAW text
-
-Precision: 0.826 | Recall: 0.869 | F1: 0.847 | F2: 0.860
-
-ROC-AUC: 0.927 | PR-AUC: 0.914 | Brier: 0.0782
-
-Confusion matrix [[TN,FP],[FN,TP]]: [[374, 35], [25, 166]]
-
-**Top SIF-potential features (RAW text):** general work, general, personnel general, work area, area time, zone set, set, path injury, hazard, set injury, reportedly, reportedly earlier
-
-**Top non-SIF features (RAW text):** personnel vicinity, vicinity time, vicinity, maintained, zone established, established, established maintained, tagged, tagged work, verified tagged, began, work began
-
-
-### Baseline 2 — TF-IDF + Logistic Regression — PREPROCESSED text (Stage 0 applied)
-
-Precision: 0.833 | Recall: 0.864 | F1: 0.848 | F2: 0.858
-
-ROC-AUC: 0.927 | PR-AUC: 0.917 | Brier: 0.0778
-
-Confusion matrix [[TN,FP],[FN,TP]]: [[376, 33], [26, 165]]
-
-**Top SIF-potential features (PREPROCESSED text (Stage 0 applied)):** personnel general, general, general work, work area, area time, zone set, set, path injury, hazard, worker, set injury, directly
-
-**Top non-SIF features (PREPROCESSED text (Stage 0 applied)):** vicinity, vicinity time, personnel vicinity, established, maintained, established maintained, zone established, began, tagged work, verified tagged, work began, tagged
-
-
-**4-bucket routing on test set (PREPROCESSED text (Stage 0 applied)):** {'HIGH_CONF_NON_SIF': 383, 'HIGH_CONF_SIF': 128, 'LOW_CONF_REVIEW': 89}
-
-Fraction routed to human review queue: 14.83%
-
-
-**Preprocessing impact on Baseline 2:**
-- Recall: 0.869 -> 0.864
-- F2:     0.860 -> 0.858
-- PR-AUC: 0.914 -> 0.917
-Even a model with learned n-gram features benefits from preprocessing: abbreviation expansion and typo correction consolidate variant spellings ('confimed', 'isolaton', 'LOTO', 'PTW') into the same feature the model already learned signal for, instead of splitting that signal across several rare, unseen tokens the vectorizer treats as unrelated.
-
-
-## Baseline 2b — LSR Tag Classification (multi-class, TF-IDF + LogReg, preprocessed text)
+The single most dangerous failure mode for this problem is a model that
+learns "text that mentions injury -> dangerous", because that is exactly
+backwards for near-miss reports. Top positive tokens of the interpretable
+bag-of-words baseline:
 
 ```
-                         precision    recall  f1-score   support
-
-         Confined Space       1.00      1.00      1.00        12
-                Driving       1.00      1.00      1.00        22
-       Energy Isolation       1.00      0.82      0.90        82
-               Hot Work       0.71      1.00      0.83        12
-           Line of Fire       0.48      0.70      0.57        23
-Safe Mechanical Lifting       0.33      0.25      0.29        20
-      Working at Height       0.47      0.70      0.56        10
-
-               accuracy                           0.78       181
-              macro avg       0.71      0.78      0.73       181
-           weighted avg       0.81      0.78      0.79       181
-
+working, radiography, worker was, but, being, general work, general, the general, work area, area at, inside, inside the, place at, was being, pipeline welds
 ```
 
+No injury/outcome tokens in the top features. The model is keying on barrier and energy language, which is the intended behaviour.
 
-## Summary — What Stage 0 Preprocessing Proves
+## Life-Saving Rule tagging
 
-- Preprocessing is not cosmetic: the rule-based baseline (which has zero learning capacity to compensate for unseen spellings) gained **+9.9 recall points** (0.408 -> 0.508) once abbreviations ('LOTO', 'PTW') and typos ('confimed', 'isolaton') were normalized — exactly the population of reports a hardcoded English keyword list would otherwise silently miss.
-- The learned TF-IDF model was already fairly robust to this level of noise (recall/F2 essentially unchanged, PR-AUC marginally higher) — a legitimate, useful finding in itself: it shows *why* the project still needs preprocessing (the rule layer and any future exact-phrase-matching logic depend on it) even though the statistical model degrades more gracefully on its own.
-- **Three real bugs were caught and fixed** while building this module, all through actually running it against the full dataset rather than trusting it after eyeballing a few examples:
-  1. Naive fuzzy-typo-correction corrupting a correctly-expanded abbreviation ('self **contained** breathing apparatus' -> 'self **confined** breathing apparatus') — fixed with a protected-word set derived from the abbreviation/glossary expansions themselves.
-  2. A whitespace-collapse ordering bug leaving double spaces after stripping tag numbers like '#482' — fixed by reordering the regex passes so content-removal runs before whitespace collapsing.
-  3. The same fuzzy-correction logic silently stripping the meaning-bearing 're-' prefix from 're-verified' (0.84 string-similarity to 'verified'), which flipped 'not **re-verified**' (a real barrier gap) into 'not verified' and caused the rule classifier to miss it — this one was only caught by evaluating on the full 3,000-report set, not the 11-case unit test suite, and is the reason the fix now blanket-excludes any hyphenated token from fuzzy correction rather than patching one word at a time.
-- The practical lesson for the team: unit tests catch bugs you thought to test for; full-dataset evaluation catches the ones you didn't. Both are now part of this module and should stay part of it as the abbreviation/glossary/typo dictionaries grow.
+Top-1 **99.0%** Â· Top-2 **100.0%** across 9 IOGP rules (2,160 test reports).
+
+| Rule | Precision | Recall | F1 | Support |
+|---|---|---|---|---|
+| Bypassing Safety Controls | 0.99 | 1.00 | 0.99 | 142 |
+| Confined Space | 0.99 | 1.00 | 0.99 | 146 |
+| Driving | 1.00 | 0.99 | 1.00 | 197 |
+| Energy Isolation | 0.99 | 0.99 | 0.99 | 561 |
+| Hot Work | 0.99 | 1.00 | 1.00 | 281 |
+| Line of Fire | 0.98 | 0.97 | 0.98 | 311 |
+| Safe Mechanical Lifting | 0.97 | 0.99 | 0.98 | 203 |
+| Work Authorisation | 1.00 | 1.00 | 1.00 | 242 |
+| Working at Height | 0.99 | 0.99 | 0.99 | 77 |
+| macro avg | 0.99 | 0.99 | 0.99 | 2160 |
+| weighted avg | 0.99 | 0.99 | 0.99 | 2160 |
+
+## Supporting extraction heads
+
+- Energy type: **98.5%** accuracy over 14 classes
+- Barrier status (4 states): **100.0%** accuracy, ECE 0.0011
+
+## Hybrid system (the proposed contribution)
+
+B5 is the two-stage architecture: learned extraction feeding a fixed,
+auditable SCL decision structure. Its value is not a higher raw score than
+B4 â€” it is that every decision arrives with the extracted fields, spans and
+an ontology-grounded justification attached, which an end-to-end classifier
+structurally cannot provide.
+
+- Recall 0.848 Â· Precision 0.734 Â· F2 0.822
+- LSR top-1 (ontology lookup, not learned): 0.753
+- 13 ms/report single-threaded
+
+Review-bucket distribution:
+
+| Bucket | Reports |
+|---|---|
+| LOW_CONF_REVIEW | 1159 |
+| NEEDS_MORE_INFO | 727 |
+| HIGH_CONF_NON_SIF | 454 |
+| HIGH_CONF_SIF | 160 |
+
+## Saturated metrics â€” read these as a warning, not a result
+
+The following scores are at or near ceiling: **barrier status (1.000)**, **LSR top-1 (0.990)**, **bag-of-words recall (0.954)**.
+
+That is not evidence of a strong model. It is evidence that the synthetic
+generator is predictable: every categorical value is realised from a finite
+phrase bank, so a classifier can recover the label by recognising the
+template rather than by reading the situation. The fine-tuned NER model
+shows the same effect even more starkly, scoring exact span F1 = 1.000 â€”
+see `reports/ner_ood_probe.md`, where the same model is run against
+hand-written reports the generator could not have produced and its span
+boundaries visibly degrade.
+
+The numbers worth attending to are the ones that are NOT saturated: the
+hybrid system's recall/precision, calibration error, and the gap between the
+rule baseline and the learned models. Those still carry signal.
+
+## What this does and does not establish
+
+**Established:** the pipeline runs end to end on messy, code-mixed, typo-laden
+text; the SCL reasoning is faithfully implemented; confidence is calibrated
+well enough to drive review routing; the model is not keying on injury words.
+
+**Not established:** real-world recall or precision. These metrics are
+circular to the extent that the test set shares generation assumptions with
+the training set. Real validation requires an SME-reviewed gold set drawn from
+actual OIL HSSE exports, with inter-annotator agreement measured (target
+Cohen's kappa > 0.6) before any production threshold is agreed.

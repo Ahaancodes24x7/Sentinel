@@ -1,52 +1,43 @@
-import React, { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Sidebar } from '../components/layout/Sidebar';
 import { Topbar } from '../components/layout/Topbar';
 
-const PAGE_TITLES: Record<string, string> = {
-  '/dashboard': 'Executive Safety Command Center',
-  '/reports': 'Report Intelligence',
-  '/risk-intelligence': 'Risk Intelligence Workspace',
-  '/sif-precursors': 'Serious Injury & Fatality Precursors',
-  '/barriers': 'Safety Barrier Intelligence',
-  '/patterns': 'Emerging Risk Patterns',
-  '/life-saving-rules': 'Life-Saving Rule Compliance',
-  '/recommendations': 'Recommended Interventions',
-  '/analytics': 'Advanced Safety Analytics',
-  '/model-performance': 'AI / ML Model Performance',
-  '/audit-log': 'Audit Log & Compliance',
-  '/review-queue': 'HSE Review Queue (Human-in-the-Loop)',
-  '/settings': 'System Configuration',
-};
-
-export const MainLayout: React.FC = () => {
-  const [selectedSite, setSelectedSite] = useState('All Sites');
+export function MainLayout() {
   const location = useLocation();
 
-  const getTitle = () => {
-    if (location.pathname.startsWith('/reports/')) return 'Report Detail Intelligence';
-    return PAGE_TITLES[location.pathname] || 'Safety Intelligence Command';
-  };
-
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0b0f17] text-slate-100 bg-telemetry-grid">
-      {/* Sidebar */}
+    <div className="field-grid scanlines flex h-screen overflow-hidden bg-bg">
+      {/* Ambient glow: two slow-drifting pools of light so the ground is never
+          a flat void. Sits behind everything and takes no pointer events. */}
+      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div className="drift absolute -left-40 -top-40 h-[36rem] w-[36rem] rounded-full bg-hivis/[0.045] blur-[120px]" />
+        <div
+          className="drift absolute -bottom-52 right-[-10rem] h-[32rem] w-[32rem] rounded-full bg-info/[0.04] blur-[120px]"
+          style={{ animationDelay: '-9s' }}
+        />
+      </div>
+
       <Sidebar />
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        {/* Topbar */}
-        <Topbar
-          pageTitle={getTitle()}
-          selectedSite={selectedSite}
-          onSiteChange={(site) => setSelectedSite(site)}
-        />
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+        <Topbar />
 
-        {/* Dynamic Route Content */}
-        <main className="flex-1 overflow-y-auto p-6 space-y-6">
-          <Outlet context={{ selectedSite }} />
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="p-5"
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
     </div>
   );
-};
+}

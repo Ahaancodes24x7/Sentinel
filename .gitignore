@@ -8,3 +8,6 @@ venv/
 !.env.example
 .idea/
 .vscode/
+# Local verification artefacts
+scratch_*.db
+*.db-journal

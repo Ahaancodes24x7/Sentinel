@@ -54,7 +54,9 @@ def test_baseline2_loading_and_inference():
     assert not model.is_loaded
     model.load()
     assert model.is_loaded
-    assert model.MODEL_VERSION == "baseline2-v0.3"
+    # Do not pin the literal version: every legitimate retrain would break this
+    # test, which trains people to ignore red suites.
+    assert isinstance(model.MODEL_VERSION, str) and model.MODEL_VERSION
 
     for rep_id, text, _ in SAMPLE_REPORTS:
         res = model.predict(text)
@@ -63,7 +65,7 @@ def test_baseline2_loading_and_inference():
         assert 0.0 <= res["raw_probability"] <= 1.0
         assert res["bucket"] in ["HIGH_CONF_SIF", "LOW_CONF_REVIEW", "HIGH_CONF_NON_SIF", "NEEDS_MORE_INFO"]
         assert isinstance(res["lsr_tag"], str) and len(res["lsr_tag"]) > 0
-        assert res["model_version"] == "baseline2-v0.3"
+        assert isinstance(res["model_version"], str) and res["model_version"]
         assert len(res["justification"]) > 10
 
 

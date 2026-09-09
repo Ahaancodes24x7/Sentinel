@@ -14,5 +14,14 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true,
+    // The client now calls a RELATIVE /api/v1, so the dev server has to forward
+    // it to the backend. Same-origin in dev and in production, which means no
+    // CORS and no environment-specific URL baked into the bundle.
+    proxy: {
+      '/api': {
+        target: process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
   },
 });

@@ -133,7 +133,10 @@ class TestSeventeenScenarios:
         assert res["extracted_fields"]["barrier_status"]["label"] == "not_mentioned"
         assert res["reasoning"]["barrier_gap_severity"] is None
         assert res["classification"]["bucket"] == "NEEDS_MORE_INFO"
-        assert res["classification"]["sif_potential"] is False
+        # See test_silence_routes_to_needs_more_info: an unmentioned barrier on a
+        # high-energy exposed report is an unconfirmed control, so the precursor
+        # verdict stands as a candidate while the bucket withholds confidence.
+        assert res["classification"]["sif_potential"] is True
         assert_span_invariance(text, res["extracted_fields"])
 
     # Scenario 10: Near-miss: dropped wrench from height, deflected by netting, worker below -> high energy=True, near-miss preserved, SIF=True

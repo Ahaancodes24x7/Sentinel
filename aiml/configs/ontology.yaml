@@ -1,3 +1,187 @@
+# =============================================================================
+# SENTINEL — SIF-Precursor Safety Knowledge Layer
+# PS 26165 (Oil India Limited / SIH 2026)
+#
+# Single shared taxonomy for the AI/ML pipeline, the backend and the frontend.
+# A deliberately LIGHTWEIGHT graph/taxonomy (not OWL), per Section 8 of the
+# research blueprint.
+#
+#   Activity   --(typically involves)--> EnergyType
+#   EnergyType --(is governed by)-------> LifeSavingRule
+#   EnergyType --(is controlled by)-----> BarrierType
+#   BarrierType --(has)-----------------> FailureMode
+#
+# Energy categories adapt the EEI "energy wheel" (Hallowell, SCL rev. 2024) to
+# upstream oil & gas. LSR names follow IOGP Report 459 (9 rules).
+# =============================================================================
+
+version: "2.0.0"
+taxonomy_source: "EEI SCL Model (energy wheel) + IOGP Report 459 Life-Saving Rules"
+
+# -----------------------------------------------------------------------------
+# 1. IOGP LIFE-SAVING RULES (9) — the fixed label space for requirement (b)
+# -----------------------------------------------------------------------------
+life_saving_rules:
+  Bypassing Safety Controls:
+    icon: shield-off
+    description: "Obtain authorisation before overriding or disabling safety controls."
+  Confined Space:
+    icon: box
+    description: "Obtain authorisation before entering a confined space."
+  Driving:
+    icon: truck
+    description: "Follow safe driving rules."
+  Energy Isolation:
+    icon: zap-off
+    description: "Verify isolation and zero energy before work begins."
+  Hot Work:
+    icon: flame
+    description: "Control flammables and ignition sources."
+  Line of Fire:
+    icon: crosshair
+    description: "Keep yourself and others out of the line of fire."
+  Safe Mechanical Lifting:
+    icon: crane
+    description: "Plan lifting operations and control the area."
+  Work Authorisation:
+    icon: clipboard-check
+    description: "Work with a valid permit when required."
+  Working at Height:
+    icon: arrow-up-from-line
+    description: "Protect yourself against a fall when working at height."
+
+# -----------------------------------------------------------------------------
+# 2. ENERGY TYPES (14) — EEI energy wheel adapted.
+#    magnitude_class (1-5) drives the severity-weighting term of the
+#    precursor-density metric. is_high_energy approximates SCL's >=1500 J test.
+# -----------------------------------------------------------------------------
+energy_types:
+  stored/electrical energy:
+    is_high_energy: true
+    lsr_tag: Energy Isolation
+    magnitude_class: 4
+    keywords: [electrical, energised, energized, live conductor, switchgear, transformer, busbar, PMCC, MCC, breaker, stored energy, capacitor, 440V, 11kV, 415V]
+  pressure/hydraulic energy:
+    is_high_energy: true
+    lsr_tag: Energy Isolation
+    magnitude_class: 4
+    keywords: [pressure, pressurised, pressurized, hydraulic, pneumatic, trapped pressure, blowdown, depressurise, depressurize, hose whip, accumulator, wellhead pressure, bleed off]
+  thermal (hot work):
+    is_high_energy: true
+    lsr_tag: Hot Work
+    magnitude_class: 4
+    keywords: [hot work, welding, grinding, cutting torch, spark, flame, burner, molten, steam, hot surface, gouging, brazing]
+  flammable/explosive atmosphere:
+    is_high_energy: true
+    lsr_tag: Hot Work
+    magnitude_class: 5
+    keywords: [gas leak, hydrocarbon release, flammable vapour, flammable vapor, LEL, explosive atmosphere, gas cloud, condensate spill, methane, ignition source]
+  gravitational (suspended load):
+    is_high_energy: true
+    lsr_tag: Safe Mechanical Lifting
+    magnitude_class: 4
+    keywords: [suspended load, crane, hoist, sling, rigging, lifting, tagline, boom, shackle, load chart, hydra crane, tandem lift]
+  fall from height:
+    is_high_energy: true
+    lsr_tag: Working at Height
+    magnitude_class: 4
+    keywords: [height, scaffold, scaffolding, fall arrest, harness, edge protection, elevated platform, derrick, monkey board, ladder, mast, fragile roof]
+  kinetic (line of fire):
+    is_high_energy: true
+    lsr_tag: Line of Fire
+    magnitude_class: 4
+    keywords: [line of fire, stored tension, whip, recoil, pig launcher, pig receiver, snap back, tensioned, dropped object, falling object, ejected]
+  mechanical/rotating equipment:
+    is_high_energy: true
+    lsr_tag: Line of Fire
+    magnitude_class: 4
+    keywords: [rotating, rotating equipment, pump shaft, coupling, guard, drawworks, top drive, belt drive, flywheel, gearbox, entanglement, nip point]
+  vehicular/motion:
+    is_high_energy: true
+    lsr_tag: Driving
+    magnitude_class: 4
+    keywords: [vehicle, reversing, forklift, tanker, trailer, journey management, seat belt, speeding, banksman, traffic, mobile plant]
+  atmospheric/asphyxiation:
+    is_high_energy: true
+    lsr_tag: Confined Space
+    magnitude_class: 5
+    keywords: [confined space, oxygen deficient, nitrogen purge, inerting, tank entry, vessel entry, sump, H2S, hydrogen sulphide, hydrogen sulfide, breathing apparatus, SCBA, gas test]
+  chemical/toxic exposure:
+    is_high_energy: true
+    lsr_tag: Work Authorisation
+    magnitude_class: 3
+    keywords: [chemical, corrosive, acid, caustic, amine, biocide, methanol, splash, MSDS, SDS, toxic, mud additive]
+  radiation (NORM/radiography):
+    is_high_energy: true
+    lsr_tag: Work Authorisation
+    magnitude_class: 3
+    keywords: [radiography, radioactive, NORM, gamma, iridium, source pit, radiation barrier, dose rate, RSO]
+  defeated safety system:
+    is_high_energy: true
+    lsr_tag: Bypassing Safety Controls
+    magnitude_class: 5
+    keywords: [bypass, bypassed, overridden, override, inhibit, inhibited, jumpered, defeated, interlock, ESD, F&G, alarm disabled, trip disabled, car sealed]
+  low-energy/ergonomic:
+    is_high_energy: false
+    lsr_tag: Work Authorisation
+    magnitude_class: 1
+    keywords: [housekeeping, manual handling, ergonomic, slip, trip, spillage, lighting, signage, tidy]
+
+# -----------------------------------------------------------------------------
+# 3. BARRIER TYPES — bow-tie vocabulary flattened to report level.
+#    is_direct_control follows the SCL definition: effective even under
+#    foreseeable human error (a mechanical barrier, not a procedure or PPE).
+# -----------------------------------------------------------------------------
+barrier_types:
+  Energy isolation & LOTO:
+    controls_energy: [stored/electrical energy, pressure/hydraulic energy]
+    control_level: engineering
+    is_direct_control: true
+    failure_modes: [isolation not verified, isolation point incorrect, lock or tag missing, stored energy not dissipated, isolation removed early]
+  Permit to work:
+    controls_energy: [thermal (hot work), chemical/toxic exposure, radiation (NORM/radiography), low-energy/ergonomic]
+    control_level: administrative
+    is_direct_control: false
+    failure_modes: [permit not raised, permit expired, scope changed without revalidation, sign-off missing, permit not at worksite]
+  Gas testing & atmospheric monitoring:
+    controls_energy: [atmospheric/asphyxiation, flammable/explosive atmosphere]
+    control_level: engineering
+    is_direct_control: true
+    failure_modes: [gas test not performed, gas test stale, detector uncalibrated, continuous monitoring absent, test point unrepresentative]
+  Exclusion zone & barricading:
+    controls_energy: [gravitational (suspended load), kinetic (line of fire), radiation (NORM/radiography)]
+    control_level: engineering
+    is_direct_control: true
+    failure_modes: [zone not established, zone not enforced, barricade breached, signage absent, watchman absent]
+  Fall protection:
+    controls_energy: [fall from height]
+    control_level: engineering
+    is_direct_control: true
+    failure_modes: [anchor point absent, harness not clipped, edge protection incomplete, scaffold tag missing, unrated anchor]
+  Machine guarding:
+    controls_energy: [mechanical/rotating equipment]
+    control_level: engineering
+    is_direct_control: true
+    failure_modes: [guard removed, guard damaged, interlock defeated, guard not refitted after maintenance]
+  Traffic & journey management:
+    controls_energy: [vehicular/motion]
+    control_level: administrative
+    is_direct_control: false
+    failure_modes: [banksman absent, route not assessed, speed limit exceeded, reversing without spotter, journey plan absent]
+  Safety instrumented system:
+    controls_energy: [defeated safety system]
+    control_level: engineering
+    is_direct_control: true
+    failure_modes: [interlock bypassed without authorisation, alarm inhibited, trip disabled, override left in place, no compensating measure]
+  Lifting plan & rigging control:
+    controls_energy: [gravitational (suspended load)]
+    control_level: administrative
+    is_direct_control: false
+    failure_modes: [lift plan absent, load chart exceeded, uncertified rigging, taglines not used, competency unverified]
+
+# -----------------------------------------------------------------------------
+# 4. ACTIVITIES (32) and their plausible energy types
+# -----------------------------------------------------------------------------
 activities:
   - maintenance on process equipment
   - hot work / welding near process line
@@ -9,34 +193,104 @@ activities:
   - scaffolding erection at height
   - pipeline pigging operation
   - routine equipment inspection
-energy_types:
-  stored/electrical energy: {is_high_energy: true, lsr_tag: Energy Isolation}
-  thermal (hot work): {is_high_energy: true, lsr_tag: Hot Work}
-  gravitational (suspended load): {is_high_energy: true, lsr_tag: Safe Mechanical Lifting}
-  kinetic (line of fire): {is_high_energy: true, lsr_tag: Line of Fire}
-  atmospheric/asphyxiation: {is_high_energy: true, lsr_tag: Confined Space}
-  vehicular/motion: {is_high_energy: true, lsr_tag: Driving}
-  fall from height: {is_high_energy: true, lsr_tag: Working at Height}
-  low-energy/ergonomic: {is_high_energy: false, lsr_tag: Work Authorisation}
+  - wellhead maintenance
+  - workover rig operation
+  - drilling floor operation
+  - flowline pressure testing
+  - valve replacement on live header
+  - pump overhaul in workshop
+  - gas compressor maintenance
+  - tank gauging and sampling
+  - crude oil tanker loading
+  - radiography of pipeline welds
+  - chemical dosing and drum handling
+  - firewater system testing
+  - instrument loop checking
+  - cathodic protection survey
+  - flare stack inspection
+  - separator vessel entry
+  - mud pump maintenance
+  - casing running operation
+  - night shift handover at wellsite
+  - rigging up of workover unit
+  - road tanker unloading at terminal
+  - housekeeping and waste segregation
+
 activity_energy_map:
-  maintenance on process equipment: [stored/electrical energy, low-energy/ergonomic]
-  hot work / welding near process line: [thermal (hot work), stored/electrical energy]
+  maintenance on process equipment: [stored/electrical energy, pressure/hydraulic energy, low-energy/ergonomic]
+  hot work / welding near process line: [thermal (hot work), flammable/explosive atmosphere]
   lifting operation with mobile crane: [gravitational (suspended load), kinetic (line of fire)]
-  confined space entry for tank cleaning: [atmospheric/asphyxiation, low-energy/ergonomic]
+  confined space entry for tank cleaning: [atmospheric/asphyxiation, chemical/toxic exposure]
   vehicle movement within plant premises: [vehicular/motion]
-  excavation near buried utility line: [stored/electrical energy, low-energy/ergonomic]
-  electrical panel work: [stored/electrical energy]
+  excavation near buried utility line: [stored/electrical energy, low-energy/ergonomic, pressure/hydraulic energy]
+  electrical panel work: [stored/electrical energy, defeated safety system]
   scaffolding erection at height: [fall from height, gravitational (suspended load)]
-  pipeline pigging operation: [stored/electrical energy, kinetic (line of fire)]
-  routine equipment inspection: [low-energy/ergonomic, stored/electrical energy]
-barrier_status_options: [confirmed_present, uncertain, absent_not_mentioned]
-barrier_status_phrases:
-  confirmed_present: [isolation was verified and tagged before work began, exclusion zone was established and maintained throughout, permit to work was signed off with all checks completed, gas test was conducted and confirmed safe prior to entry]
-  uncertain: [isolation status was not clearly confirmed by the crew, exclusion zone markers were present but not actively enforced, permit was raised but supervisor sign-off could not be located, gas test reportedly done earlier in the shift, not re-verified]
-  absent_not_mentioned: [no isolation was mentioned in the report, no exclusion zone was set up, work proceeded without a permit being sighted, ""]
-exposure_phrases:
-  direct_proximity: [a worker was standing within the immediate hazard zone, the contractor was positioned directly beneath the suspended load, personnel were within arm's reach of the live component, a technician was inside the equipment when work commenced]
-  indirect_proximity: [a worker was nearby but not directly in the hazard path, personnel were in the general work area at the time]
-  no_exposure: [no personnel were in the vicinity at the time, the area was clear of workers during the activity]
-outcome_phrases: [No injury occurred., "No injury occurred; worker moved away in time.", Minor first aid case reported., "Near miss — situation was corrected before escalation.", Reported as unsafe condition during routine walk-around.]
-sites: [Rig 4, Rig 7, Plant C, Well Site B, Field Station 2, Terminal A]
+  pipeline pigging operation: [pressure/hydraulic energy, kinetic (line of fire)]
+  routine equipment inspection: [low-energy/ergonomic, mechanical/rotating equipment]
+  wellhead maintenance: [pressure/hydraulic energy, flammable/explosive atmosphere]
+  workover rig operation: [gravitational (suspended load), pressure/hydraulic energy, kinetic (line of fire)]
+  drilling floor operation: [mechanical/rotating equipment, gravitational (suspended load)]
+  flowline pressure testing: [pressure/hydraulic energy, kinetic (line of fire)]
+  valve replacement on live header: [pressure/hydraulic energy, flammable/explosive atmosphere]
+  pump overhaul in workshop: [mechanical/rotating equipment, stored/electrical energy]
+  gas compressor maintenance: [mechanical/rotating equipment, pressure/hydraulic energy, defeated safety system]
+  tank gauging and sampling: [atmospheric/asphyxiation, fall from height]
+  crude oil tanker loading: [flammable/explosive atmosphere, vehicular/motion]
+  radiography of pipeline welds: [radiation (NORM/radiography)]
+  chemical dosing and drum handling: [chemical/toxic exposure, low-energy/ergonomic]
+  firewater system testing: [pressure/hydraulic energy, defeated safety system]
+  instrument loop checking: [defeated safety system, stored/electrical energy]
+  cathodic protection survey: [stored/electrical energy, low-energy/ergonomic]
+  flare stack inspection: [fall from height, thermal (hot work)]
+  separator vessel entry: [atmospheric/asphyxiation, pressure/hydraulic energy]
+  mud pump maintenance: [mechanical/rotating equipment, pressure/hydraulic energy]
+  casing running operation: [gravitational (suspended load), kinetic (line of fire)]
+  night shift handover at wellsite: [stored/electrical energy, low-energy/ergonomic]
+  rigging up of workover unit: [gravitational (suspended load), mechanical/rotating equipment]
+  road tanker unloading at terminal: [vehicular/motion, flammable/explosive atmosphere]
+  housekeeping and waste segregation: [low-energy/ergonomic]
+
+# -----------------------------------------------------------------------------
+# 5. SITES — workforce is the denominator for the reporting-culture correction
+#    term in the composite precursor-density metric (Section 11).
+# -----------------------------------------------------------------------------
+sites:
+  - {name: "Rig 4",              type: drilling,   region: "Upper Assam",    workforce: 120, reporting_culture: 1.00}
+  - {name: "Rig 7",              type: drilling,   region: "Upper Assam",    workforce: 110, reporting_culture: 0.72}
+  - {name: "Rig 12",             type: drilling,   region: "Arunachal",      workforce: 95,  reporting_culture: 1.35}
+  - {name: "Plant C",            type: processing, region: "Duliajan",       workforce: 240, reporting_culture: 1.10}
+  - {name: "Plant D",            type: processing, region: "Duliajan",       workforce: 205, reporting_culture: 0.88}
+  - {name: "Well Site B",        type: wellsite,   region: "Upper Assam",    workforce: 60,  reporting_culture: 0.95}
+  - {name: "Well Site F",        type: wellsite,   region: "Nagaland",       workforce: 55,  reporting_culture: 1.20}
+  - {name: "Field Station 2",    type: gathering,  region: "Upper Assam",    workforce: 80,  reporting_culture: 1.05}
+  - {name: "Field Station 5",    type: gathering,  region: "Arunachal",      workforce: 72,  reporting_culture: 0.80}
+  - {name: "Terminal A",         type: terminal,   region: "Duliajan",       workforce: 150, reporting_culture: 1.15}
+  - {name: "Pipeline Section 9", type: pipeline,   region: "Assam Corridor", workforce: 65,  reporting_culture: 0.90}
+  - {name: "Workshop Central",   type: workshop,   region: "Duliajan",       workforce: 140, reporting_culture: 1.00}
+
+# -----------------------------------------------------------------------------
+# 6. BARRIER STATUS — 4 states matching the reasoner's gap_severity ladder
+# -----------------------------------------------------------------------------
+barrier_status_options: [confirmed_present, uncertain, explicitly_absent, not_mentioned]
+
+gap_severity:
+  confirmed_present: 0.0
+  uncertain: 0.6
+  explicitly_absent: 1.0
+  not_mentioned: null
+
+exposure_options: [direct_proximity, indirect_proximity, no_exposure]
+
+# -----------------------------------------------------------------------------
+# 7. SIF-PRECURSOR DENSITY METRIC — documented and tunable, defaults equal.
+#    Explicitly NOT presented as calibrated (Section 11 of the blueprint).
+# -----------------------------------------------------------------------------
+density_metric:
+  calibrated: false
+  note: "Weights default to equal and are tunable. To be calibrated jointly with OIL HSE SMEs against historical intervention outcomes."
+  weights:
+    w1_psif_rate: 0.25
+    w2_pattern_recurrence: 0.25
+    w3_energy_magnitude: 0.25
+    w4_barrier_gap: 0.25
+    reporting_culture_penalty: 0.10

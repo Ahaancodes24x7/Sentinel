@@ -1,0 +1,471 @@
+{
+  "model_version": "sentinel-v2.0",
+  "dataset": {
+    "path": "E:\\SIH 26\\SAMARTH\\aiml\\data\\synthetic\\synthetic_uauc_reports.csv",
+    "n_total": 25000,
+    "n_train": 15000,
+    "n_val": 5000,
+    "n_test": 5000,
+    "sif_rate": 0.4321,
+    "label_noise_rate": 0.0284
+  },
+  "baselines": {
+    "B1_rule_keyword": {
+      "precision": 0.8272,
+      "recall": 0.2306,
+      "f1": 0.3606,
+      "f2": 0.2694,
+      "accuracy": 0.6468,
+      "flagged_fraction": 0.1204,
+      "confusion": {
+        "tn": 2736,
+        "fp": 104,
+        "fn": 1662,
+        "tp": 498
+      }
+    },
+    "B2_tfidf_logreg": {
+      "precision": 0.9467,
+      "recall": 0.9537,
+      "f1": 0.9502,
+      "f2": 0.9523,
+      "accuracy": 0.9568,
+      "flagged_fraction": 0.4352,
+      "confusion": {
+        "tn": 2724,
+        "fp": 116,
+        "fn": 100,
+        "tp": 2060
+      },
+      "pr_auc": 0.9583,
+      "ece": 0.1006,
+      "top_positive_tokens": [
+        "working",
+        "radiography",
+        "worker was",
+        "but",
+        "being",
+        "general work",
+        "general",
+        "the general",
+        "work area",
+        "area at",
+        "inside",
+        "inside the",
+        "place at",
+        "was being",
+        "pipeline welds"
+      ],
+      "top_negative_tokens": [
+        "and",
+        "vicinity",
+        "the vicinity",
+        "vicinity at",
+        "before",
+        "no personnel",
+        "tested",
+        "checked by",
+        "effective",
+        "housekeeping",
+        "start",
+        "the area",
+        "the activity",
+        "activity",
+        "crew confirmed"
+      ],
+      "outcome_shortcut_tokens": []
+    },
+    "B3_embedding_knn": {
+      "precision": 0.6432,
+      "recall": 0.4917,
+      "f1": 0.5573,
+      "f2": 0.516,
+      "accuracy": 0.6626,
+      "flagged_fraction": 0.3302,
+      "confusion": {
+        "tn": 2251,
+        "fp": 589,
+        "fn": 1098,
+        "tp": 1062
+      },
+      "pr_auc": 0.6647,
+      "ece": 0.028,
+      "backend": "sentence-transformers:sentence-transformers/all-MiniLM-L6-v2",
+      "fit_seconds": 139.8
+    },
+    "B4_calibrated_production": {
+      "precision": 0.9667,
+      "recall": 0.9139,
+      "f1": 0.9396,
+      "f2": 0.924,
+      "accuracy": 0.9492,
+      "flagged_fraction": 0.4084,
+      "confusion": {
+        "tn": 2772,
+        "fp": 68,
+        "fn": 186,
+        "tp": 1974
+      },
+      "pr_auc": 0.9588,
+      "ece": 0.0339,
+      "threshold": 0.738,
+      "calibration": {
+        "ece": 0.0339,
+        "brier": 0.0397,
+        "pr_auc": 0.9588,
+        "operating_point": {
+          "threshold": 0.7661,
+          "recall": 0.9,
+          "precision": 0.9676,
+          "f2": 0.9128,
+          "review_queue_fraction": 0.4018
+        },
+        "target_recall": 0.9,
+        "reliability": [
+          {
+            "bin_lower": 0.0,
+            "bin_upper": 0.1,
+            "count": 2230,
+            "mean_confidence": 0.0275,
+            "observed_accuracy": 0.0314
+          },
+          {
+            "bin_lower": 0.1,
+            "bin_upper": 0.2,
+            "count": 452,
+            "mean_confidence": 0.1366,
+            "observed_accuracy": 0.0243
+          },
+          {
+            "bin_lower": 0.2,
+            "bin_upper": 0.3,
+            "count": 89,
+            "mean_confidence": 0.2349,
+            "observed_accuracy": 0.0337
+          },
+          {
+            "bin_lower": 0.3,
+            "bin_upper": 0.4,
+            "count": 36,
+            "mean_confidence": 0.3433,
+            "observed_accuracy": 0.1389
+          },
+          {
+            "bin_lower": 0.4,
+            "bin_upper": 0.5,
+            "count": 36,
+            "mean_confidence": 0.4463,
+            "observed_accuracy": 0.3056
+          },
+          {
+            "bin_lower": 0.5,
+            "bin_upper": 0.6,
+            "count": 33,
+            "mean_confidence": 0.5484,
+            "observed_accuracy": 0.5152
+          },
+          {
+            "bin_lower": 0.6,
+            "bin_upper": 0.7,
+            "count": 55,
+            "mean_confidence": 0.6481,
+            "observed_accuracy": 0.7818
+          },
+          {
+            "bin_lower": 0.7,
+            "bin_upper": 0.8,
+            "count": 93,
+            "mean_confidence": 0.7549,
+            "observed_accuracy": 0.9247
+          },
+          {
+            "bin_lower": 0.8,
+            "bin_upper": 0.9,
+            "count": 321,
+            "mean_confidence": 0.8639,
+            "observed_accuracy": 0.9595
+          },
+          {
+            "bin_lower": 0.9,
+            "bin_upper": 1.0,
+            "count": 1655,
+            "mean_confidence": 0.9552,
+            "observed_accuracy": 0.9704
+          }
+        ],
+        "roc_auc": 0.9686
+      },
+      "at_default_0.5": {
+        "precision": 0.955,
+        "recall": 0.9537,
+        "f1": 0.9544,
+        "f2": 0.954,
+        "accuracy": 0.9606,
+        "flagged_fraction": 0.4314,
+        "confusion": {
+          "tn": 2743,
+          "fp": 97,
+          "fn": 100,
+          "tp": 2060
+        },
+        "pr_auc": 0.9588,
+        "ece": 0.0339
+      }
+    },
+    "B5_hybrid_reasoner": {
+      "precision": 0.7342,
+      "recall": 0.8475,
+      "f1": 0.7868,
+      "f2": 0.8221,
+      "accuracy": 0.8036,
+      "flagged_fraction": 0.4936,
+      "confusion": {
+        "tn": 1103,
+        "fp": 328,
+        "fn": 163,
+        "tp": 906
+      },
+      "lsr_top1_accuracy": 0.753,
+      "bucket_distribution": {
+        "LOW_CONF_REVIEW": 1159,
+        "NEEDS_MORE_INFO": 727,
+        "HIGH_CONF_NON_SIF": 454,
+        "HIGH_CONF_SIF": 160
+      },
+      "ms_per_report": 13.4
+    }
+  },
+  "lsr": {
+    "n_train": 6481,
+    "n_test": 2160,
+    "top1_accuracy": 0.9903,
+    "top2_accuracy": 1.0,
+    "per_class": {
+      "Bypassing Safety Controls": {
+        "precision": 0.9861111111111112,
+        "recall": 1.0,
+        "f1-score": 0.993006993006993,
+        "support": 142.0
+      },
+      "Confined Space": {
+        "precision": 0.9864864864864865,
+        "recall": 1.0,
+        "f1-score": 0.9931972789115646,
+        "support": 146.0
+      },
+      "Driving": {
+        "precision": 1.0,
+        "recall": 0.9949238578680203,
+        "f1-score": 0.9974554707379135,
+        "support": 197.0
+      },
+      "Energy Isolation": {
+        "precision": 0.9946236559139785,
+        "recall": 0.9893048128342246,
+        "f1-score": 0.9919571045576407,
+        "support": 561.0
+      },
+      "Hot Work": {
+        "precision": 0.9929328621908127,
+        "recall": 1.0,
+        "f1-score": 0.9964539007092199,
+        "support": 281.0
+      },
+      "Line of Fire": {
+        "precision": 0.9837133550488599,
+        "recall": 0.9710610932475884,
+        "f1-score": 0.9773462783171522,
+        "support": 311.0
+      },
+      "Safe Mechanical Lifting": {
+        "precision": 0.970873786407767,
+        "recall": 0.9852216748768473,
+        "f1-score": 0.9779951100244498,
+        "support": 203.0
+      },
+      "Work Authorisation": {
+        "precision": 1.0,
+        "recall": 0.9958677685950413,
+        "f1-score": 0.9979296066252588,
+        "support": 242.0
+      },
+      "Working at Height": {
+        "precision": 0.987012987012987,
+        "recall": 0.987012987012987,
+        "f1-score": 0.987012987012987,
+        "support": 77.0
+      },
+      "accuracy": 0.9902777777777778,
+      "macro avg": {
+        "precision": 0.9890838049080002,
+        "recall": 0.9914880216038566,
+        "f1-score": 0.9902616366559089,
+        "support": 2160.0
+      },
+      "weighted avg": {
+        "precision": 0.990312519494971,
+        "recall": 0.9902777777777778,
+        "f1-score": 0.9902734582937445,
+        "support": 2160.0
+      }
+    },
+    "classes": [
+      "Bypassing Safety Controls",
+      "Confined Space",
+      "Driving",
+      "Energy Isolation",
+      "Hot Work",
+      "Line of Fire",
+      "Safe Mechanical Lifting",
+      "Work Authorisation",
+      "Working at Height"
+    ]
+  },
+  "energy": {
+    "accuracy": 0.9852,
+    "n_classes": 14,
+    "per_class": {
+      "atmospheric/asphyxiation": {
+        "precision": 0.992831541218638,
+        "recall": 1.0,
+        "f1-score": 0.9964028776978417,
+        "support": 277.0
+      },
+      "chemical/toxic exposure": {
+        "precision": 0.9367088607594937,
+        "recall": 0.9932885906040269,
+        "f1-score": 0.9641693811074918,
+        "support": 149.0
+      },
+      "defeated safety system": {
+        "precision": 0.9930313588850174,
+        "recall": 0.9965034965034965,
+        "f1-score": 0.9947643979057592,
+        "support": 286.0
+      },
+      "fall from height": {
+        "precision": 0.9950248756218906,
+        "recall": 0.9900990099009901,
+        "f1-score": 0.9925558312655087,
+        "support": 202.0
+      },
+      "flammable/explosive atmosphere": {
+        "precision": 0.9974093264248705,
+        "recall": 0.9871794871794872,
+        "f1-score": 0.9922680412371134,
+        "support": 390.0
+      },
+      "gravitational (suspended load)": {
+        "precision": 0.9761388286334056,
+        "recall": 0.9782608695652174,
+        "f1-score": 0.9771986970684039,
+        "support": 460.0
+      },
+      "kinetic (line of fire)": {
+        "precision": 0.9701492537313433,
+        "recall": 0.9615384615384616,
+        "f1-score": 0.9658246656760773,
+        "support": 338.0
+      },
+      "low-energy/ergonomic": {
+        "precision": 0.9911816578483245,
+        "recall": 0.9790940766550522,
+        "f1-score": 0.9851007887817704,
+        "support": 574.0
+      },
+      "mechanical/rotating equipment": {
+        "precision": 0.992822966507177,
+        "recall": 0.992822966507177,
+        "f1-score": 0.992822966507177,
+        "support": 418.0
+      },
+      "pressure/hydraulic energy": {
+        "precision": 0.9864314789687924,
+        "recall": 0.9758389261744966,
+        "f1-score": 0.9811066126855601,
+        "support": 745.0
+      },
+      "radiation (NORM/radiography)": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 160.0
+      },
+      "stored/electrical energy": {
+        "precision": 0.9740484429065744,
+        "recall": 0.9859894921190894,
+        "f1-score": 0.979982593559617,
+        "support": 571.0
+      },
+      "thermal (hot work)": {
+        "precision": 0.9738562091503268,
+        "recall": 1.0,
+        "f1-score": 0.9867549668874173,
+        "support": 149.0
+      },
+      "vehicular/motion": {
+        "precision": 1.0,
+        "recall": 0.99644128113879,
+        "f1-score": 0.9982174688057041,
+        "support": 281.0
+      },
+      "accuracy": 0.9852,
+      "macro avg": {
+        "precision": 0.9842596286182754,
+        "recall": 0.9883611898490202,
+        "f1-score": 0.9862263777989602,
+        "support": 5000.0
+      },
+      "weighted avg": {
+        "precision": 0.985325171285093,
+        "recall": 0.9852,
+        "f1-score": 0.9852152686582202,
+        "support": 5000.0
+      }
+    }
+  },
+  "barrier": {
+    "accuracy": 1.0,
+    "per_class": {
+      "confirmed_present": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 2015.0
+      },
+      "explicitly_absent": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 900.0
+      },
+      "not_mentioned": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 769.0
+      },
+      "uncertain": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 1316.0
+      },
+      "accuracy": 1.0,
+      "macro avg": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 5000.0
+      },
+      "weighted avg": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 5000.0
+      }
+    },
+    "ece": 0.0011
+  },
+  "elapsed_seconds": 262.5
+}

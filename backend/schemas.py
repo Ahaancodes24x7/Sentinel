@@ -61,10 +61,35 @@ class ReportIngestItem(BaseModel):
     site: str
     report_text: str
     source: Source = Source.synthetic
+    # The observation time from the source export. Without it every ingested
+    # report would be stamped "now", which silently destroys the trend and
+    # early-warning charts - they would all show a single spike at import time.
+    timestamp: Optional[datetime] = None
+    reporter_role: Optional[str] = None
+    # Ground-truth columns, present only for the labelled synthetic corpus.
+    # Retained so evaluation views can compare prediction against label; never
+    # used by the pipeline to make a prediction.
+    ground_truth: Optional[dict] = None
 
 
 class ReportIngestRequest(BaseModel):
     reports: list[ReportIngestItem]
+
+
+class ReportSubmitRequest(BaseModel):
+    """One report, filed by a person, analysed synchronously.
+
+    Separate from the bulk ingest path on purpose: bulk ingest is a manager-only
+    batch job that returns 202 and processes in the background, which is the
+    right shape for a nightly export but useless for someone who has just
+    written up a near-miss and wants to know whether it mattered.
+    """
+
+    site: str
+    report_text: str = Field(min_length=15)
+    activity: Optional[str] = None
+    reporter_role: Optional[str] = None
+    observed_at: Optional[datetime] = None
 
 
 class ReportIngestResponse(BaseModel):
@@ -140,6 +165,12 @@ class ExtractedFields(BaseModel):
     evidence_spans: list[EvidenceSpanItem] = Field(default_factory=list)
 
 
+class ReasoningStep(BaseModel):
+    step: int
+    label: str
+    detail: str
+
+
 class Classification(BaseModel):
     model_config = {"protected_namespaces": ()}
     sif_potential: bool
@@ -148,6 +179,10 @@ class Classification(BaseModel):
     lsr_tag: str
     justification: str
     model_version: str
+    # Activity -> Energy -> Exposure -> Barrier -> Consequence -> SIF -> LSR.
+    # Surfaced on the classification (not buried in the reasoning blob) because
+    # the report detail view renders it as the primary explanation of the call.
+    reasoning_chain: list[ReasoningStep] = Field(default_factory=list)
 
 
 class ReportDetail(BaseModel):
@@ -221,12 +256,20 @@ class RankingRow(BaseModel):
     trend_direction: str  # "up" | "down" | "flat"
     trend_pct: float
     primary_lsr: str
+    simple_density: float = 0.0
+    # Component breakdown for the composite metric. Always returned so the UI
+    # can show WHAT drove a site's score rather than an unexplained number.
+    components: dict[str, float] = Field(default_factory=dict)
 
 
 class MetricWeights(BaseModel):
-    w1_severity_adjusted_rate: float = 0.34
-    w2_recurrence: float = 0.33
-    w3_severity_weighting: float = 0.33
+    """Composite-metric weights. Defaults are EQUAL and explicitly uncalibrated."""
+
+    w1_psif_rate: float = 0.25
+    w2_pattern_recurrence: float = 0.25
+    w3_energy_magnitude: float = 0.25
+    w4_barrier_gap: float = 0.25
+    reporting_culture_penalty: float = 0.10
 
 
 class RankingsResponse(BaseModel):
@@ -234,6 +277,11 @@ class RankingsResponse(BaseModel):
     window_days: int
     rankings: list[RankingRow]
     weights: Optional[MetricWeights] = None  # present only when metric == "composite"
+    group_by: str = "site"
+    # Always false for now. The frontend renders this next to the number so an
+    # uncalibrated composite is never displayed as if it were validated.
+    calibrated: bool = False
+    note: Optional[str] = None
 
 
 class ClusterItem(BaseModel):
@@ -244,40 +292,72 @@ class ClusterItem(BaseModel):
     sites: list[str]
     primary_lsr: str
     pattern_type: PatternType
+    site_count: int = 0
+    primary_barrier_failure: Optional[str] = None
+    barrier_type: Optional[str] = None
+    sif_member_count: int = 0
+    sif_share: float = 0.0
+    mean_magnitude: float = 0.0
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
 
 
 class ClusterEdge(BaseModel):
     source: str
     target: str
     similarity: float = Field(ge=0.0, le=1.0)
+    cluster_id: Optional[str] = None
 
 
 class ClustersResponse(BaseModel):
     clusters: list[ClusterItem]
     edges: list[ClusterEdge]
+    noise_count: int = 0
+    computed_at: Optional[str] = None
 
 
 class TrendPoint(BaseModel):
     period: str  # ISO date, start of week/month
     count: int
+    total_reports: int = 0
+    sif_count: int = 0
+    precursor_rate: float = 0.0
 
 
 class TrendAlert(BaseModel):
     period: str
     message: str
     method: str  # "CUSUM" | "EWMA"
+    count: float = 0.0
+    baseline_mean: float = 0.0
+    threshold: float = 0.0
+    severity: str = "medium"
 
 
 class TrendsResponse(BaseModel):
     series: list[TrendPoint]
     alerts: list[TrendAlert]
+    granularity: str = "weekly"
+    cusum: dict = Field(default_factory=dict)
+    ewma: dict = Field(default_factory=dict)
+    # Fixed copy stating what SPC can and cannot claim. Rendered adjacent to
+    # the chart, never as a hover-only tooltip.
+    method_note: Optional[str] = None
 
 
 class DashboardSummary(BaseModel):
     total_reports: int
     high_priority_pattern_count: int
     reports_pending_review: int
-    last_ingested_at: datetime
+    last_ingested_at: Optional[datetime] = None
+    # Live distribution across the 4 confidence buckets. The console renders
+    # this directly, so it must come from the DB rather than being recomputed
+    # (and possibly disagreeing) on the client.
+    bucket_counts: dict[str, int] = Field(default_factory=dict)
+    sif_flagged_count: int = 0
+    sif_rate: float = 0.0
+    site_count: int = 0
+    emerging_pattern_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -319,10 +399,41 @@ class RecommendationsResponse(BaseModel):
     recommendations: list[RecommendationListItem]
 
 
-class EvidenceBreakdown(BaseModel):
-    mentions_missing_isolation: int
-    involves_maintenance: int
-    involves_equipment_opening: int
+class AssociationRule(BaseModel):
+    antecedent_text: str
+    consequent_text: str
+    support: float
+    confidence: float
+    baseline: float
+    lift: float
+    report_count: int
+    statement: str
+
+
+class AssociationsResponse(BaseModel):
+    rules: list[AssociationRule]
+    note: str = (
+        "Co-occurrence in reported observations. Not a causal relationship."
+    )
+
+
+class BarrierFailureRow(BaseModel):
+    activity: str
+    barrier_failure_mode: str
+    report_count: int
+    sif_count: int
+    sif_share: float
+
+
+class BarrierFailuresResponse(BaseModel):
+    items: list[BarrierFailureRow]
+
+
+class RecomputeResponse(BaseModel):
+    clusters_written: int
+    reports_considered: int
+    elapsed_seconds: float
+    status: str = "complete"
 
 
 class EvidenceDetail(BaseModel):
@@ -330,8 +441,14 @@ class EvidenceDetail(BaseModel):
     site_count: int
     window_days: int
     member_report_ids: list[str]
-    breakdown: EvidenceBreakdown
+    # Open-ended counts keyed by evidence type (barrier_explicitly_absent,
+    # direct_personnel_exposure, failure_mode::<mode>, ...). Previously three
+    # hardcoded isolation-specific fields, which could not describe a fall-
+    # protection or gas-testing pattern at all.
+    breakdown: dict[str, int] = Field(default_factory=dict)
     sites: list[str]
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
 
 
 class RecommendedIntervention(BaseModel):

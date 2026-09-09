@@ -150,8 +150,21 @@ class TestSCLReasonerAndRouting:
         clf = result["classification"]
         # Barrier was omitted
         assert result["extracted_fields"]["barrier_status"]["label"] == "not_mentioned"
-        # Silence must NOT be converted to a barrier failure or SIF
-        assert clf["sif_potential"] is False
+
+        # Silence about a barrier is an EVIDENCE GAP, not an all-clear.
+        #
+        # This assertion was previously `sif_potential is False`. That was wrong:
+        # on a high-energy report with a person exposed, "no control was
+        # mentioned" means no control was CONFIRMED, which is the SCL definition
+        # of a precursor. Clearing it would mean a real precursor at a site with
+        # sloppy reporting gets filed as harmless and vanishes from every density
+        # statistic - the exact reporting-culture bias the system is meant to
+        # correct for.
+        #
+        # So the verdict stands as a candidate, but no confidence is claimed in
+        # either direction: it routes to NEEDS_MORE_INFO for a human to close the
+        # gap, rather than into the priority queue.
+        assert clf["sif_potential"] is True
         assert clf["bucket"] == "NEEDS_MORE_INFO"
         assert "omitted barrier controls" in clf["justification"].lower()
 

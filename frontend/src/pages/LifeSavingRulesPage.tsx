@@ -1,65 +1,93 @@
-import React from 'react';
-import { CheckSquare } from 'lucide-react';
-import { RiskBadge } from '../components/common/RiskBadge';
-import { mockLifeSavingRules } from '../data/mockData';
+import { motion } from 'framer-motion';
+import { Chip, Counter, PulseDot, ScanPanel } from '../components/kinetic';
+import { PanelLoading, QueryError } from '../components/common/QueryState';
+import { useOntology, useReports } from '../api/hooks';
 
-export const LifeSavingRulesPage: React.FC = () => {
+export function LifeSavingRulesPage() {
+  const { data: ontology, isLoading, error } = useOntology();
+  const { data: reports } = useReports({ sif_potential: true, limit: 200 });
+
+  const rules = Object.entries(ontology?.life_saving_rules ?? {});
+  const energyTypes = Object.entries(ontology?.energy_types ?? {});
+
+  const counts = new Map<string, number>();
+  (reports?.items ?? []).forEach((r) => {
+    if (r.lsr_tag && r.lsr_tag !== 'N/A') {
+      counts.set(r.lsr_tag, (counts.get(r.lsr_tag) ?? 0) + 1);
+    }
+  });
+  const max = Math.max(...Array.from(counts.values()), 1);
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              <CheckSquare className="w-5 h-5" />
-            </div>
-            <h2 className="text-xl font-black text-slate-100 uppercase tracking-tight font-telemetry">
-              IOGP Life-Saving Rules Performance
-            </h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Real-time compliance tracking across standard Oil & Gas Life-Saving Rules.
-          </p>
+    <div className="space-y-4">
+      <div>
+        <div className="flex items-center gap-2">
+          <PulseDot tone="info" size={6} />
+          <span className="font-mono text-2xs tracked text-ink-4">
+            REQUIREMENT (B) · RULE TAGGING
+          </span>
         </div>
-        <span className="text-xs font-telemetry font-bold text-blue-400 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20">
-          IOGP Industry Standard
-        </span>
+        <h1 className="mt-1.5 font-display text-4xl text-ink">Life-Saving Rules</h1>
+        <p className="mt-1.5 max-w-3xl text-sm text-ink-3">
+          IOGP Report 459. Rule assignment is an{' '}
+          <strong className="text-ink-2">ontology lookup</strong> from the extracted energy type,
+          not a learned end-to-end mapping — so the logic is inspectable line by line and never
+          drifts with a model update.
+        </p>
       </div>
 
-      {/* Grid of Rules */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {mockLifeSavingRules.map((rule) => (
-          <div
-            key={rule.id}
-            className="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-3 shadow-xl hover:border-slate-700 transition-all"
-          >
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="text-sm font-extrabold text-slate-100 flex items-center gap-2">
-                {rule.name}
-              </span>
-              <RiskBadge level={rule.risk_level} size="sm" />
-            </div>
+      {isLoading ? (
+        <ScanPanel>
+          <PanelLoading rows={6} />
+        </ScanPanel>
+      ) : error ? (
+        <QueryError error={error} />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {rules.map(([name, def], i) => {
+            const mapped = energyTypes.filter(([, e]) => e.lsr_tag === name);
+            const count = counts.get(name) ?? 0;
+            return (
+              <motion.div
+                key={name}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.05 }}
+              >
+                <ScanPanel className="h-full p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <h2 className="text-base leading-tight text-ink">{name}</h2>
+                    <span className="font-display text-2xl text-hivis">
+                      <Counter value={count} />
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-ink-3">{def.description}</p>
 
-            <p className="text-xs text-slate-300 leading-relaxed font-sans bg-slate-950 p-2.5 rounded border border-slate-800">
-              {rule.description}
-            </p>
+                  <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-surface-3">
+                    <motion.div
+                      className="h-full rounded-full bg-hivis"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(count / max) * 100}%` }}
+                      transition={{ delay: 0.2 + i * 0.04, duration: 0.7 }}
+                    />
+                  </div>
 
-            <div className="space-y-1 font-telemetry">
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Compliance Rate:</span>
-                <span className="font-bold text-slate-100">{rule.compliance_pct}% ({rule.violations_count} violations)</span>
-              </div>
-              <div className="w-full h-3 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${rule.compliance_pct < 80 ? 'bg-red-500' : rule.compliance_pct < 90 ? 'bg-amber-500' : 'bg-emerald-500'
-                    }`}
-                  style={{ width: `${rule.compliance_pct}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+                  <div className="mt-3 font-mono text-[9px] tracked text-ink-4">
+                    MAPPED ENERGY TYPES
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {mapped.map(([et, meta]) => (
+                      <Chip key={et} tone={meta.is_high_energy ? 'critical' : 'neutral'}>
+                        {et}
+                      </Chip>
+                    ))}
+                  </div>
+                </ScanPanel>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
-};
+}

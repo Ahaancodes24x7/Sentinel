@@ -17,6 +17,7 @@ from sqlalchemy import (
     Column,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -96,6 +97,24 @@ class ReportModel(Base):
     review_status = Column(String(32), nullable=False, default="pending", index=True)
     batch_id = Column(String(64), nullable=True, index=True)
 
+    # --- Structured event frame -------------------------------------------
+    # These are denormalised out of `extracted_fields` on ingest. The pattern
+    # layer clusters and mines over the STRUCTURED frame, not raw text, so it
+    # needs these as first-class indexed columns; digging them out of a JSON
+    # blob for every one of 25k rows on every dashboard request would be both
+    # slow and unfilterable in SQL.
+    activity = Column(String(256), nullable=True, index=True)
+    energy_type = Column(String(128), nullable=True, index=True)
+    barrier_type = Column(String(128), nullable=True, index=True)
+    barrier_status = Column(String(64), nullable=True, index=True)
+    barrier_failure_mode = Column(String(256), nullable=True)
+    exposure = Column(String(64), nullable=True, index=True)
+    magnitude_class = Column(Integer, nullable=True)
+    confidence = Column(Float, nullable=True)
+    is_high_energy = Column(Boolean, nullable=True, index=True)
+    reporter_role = Column(String(64), nullable=True)
+    cluster_id = Column(String(64), nullable=True, index=True)
+
     review_actions = relationship(
         "ReviewActionModel",
         back_populates="report",
@@ -141,6 +160,36 @@ class ActionPlanModel(Base):
     status = Column(String(32), nullable=False, default="planned")  # planned | in_progress | complete
     created_by = Column(String(128), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class PrecursorClusterModel(Base):
+    """Output of the batch clustering job (AI/ML Stage 4).
+
+    Clustering 25k structured frames takes seconds, not milliseconds, so it is
+    computed by a batch job and read from here — matching the batch-first
+    deployment posture the blueprint recommends, rather than pretending the
+    dashboard recomputes it live on every page load.
+    """
+
+    __tablename__ = "precursor_clusters"
+
+    cluster_id = Column(String(64), primary_key=True, index=True)
+    pattern_summary = Column(Text, nullable=False)
+    member_report_ids = Column(JSON, nullable=False)
+    member_count = Column(Integer, nullable=False, default=0)
+    sites = Column(JSON, nullable=False)
+    site_count = Column(Integer, nullable=False, default=0)
+    primary_lsr = Column(String(128), nullable=False, default="N/A")
+    primary_barrier_failure = Column(String(256), nullable=True)
+    barrier_type = Column(String(128), nullable=True)
+    pattern_type = Column(String(48), nullable=False, default="established")
+    sif_member_count = Column(Integer, nullable=False, default=0)
+    sif_share = Column(Float, nullable=False, default=0.0)
+    mean_magnitude = Column(Float, nullable=False, default=0.0)
+    first_seen = Column(DateTime(timezone=True), nullable=True)
+    last_seen = Column(DateTime(timezone=True), nullable=True)
+    edges = Column(JSON, nullable=True)
+    computed_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 class AuditLogModel(Base):

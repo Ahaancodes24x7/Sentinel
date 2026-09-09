@@ -1,0 +1,112 @@
+{
+  "base_model": "distilbert-base-uncased",
+  "n_train": 7650,
+  "n_test": 1350,
+  "epochs": 2,
+  "max_length": 128,
+  "overall": {
+    "exact": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 6386,
+      "n_pred": 6386,
+      "n_gold": 6386
+    },
+    "partial": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 6386,
+      "n_pred": 6386,
+      "n_gold": 6386
+    }
+  },
+  "per_entity": {
+    "exact": {
+      "ACTIVITY": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1350,
+        "n_pred": 1350,
+        "n_gold": 1350
+      },
+      "HAZARD": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1198,
+        "n_pred": 1198,
+        "n_gold": 1198
+      },
+      "BARRIER": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1138,
+        "n_pred": 1138,
+        "n_gold": 1138
+      },
+      "EXPOSURE": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1350,
+        "n_pred": 1350,
+        "n_gold": 1350
+      },
+      "LOCATION": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1350,
+        "n_pred": 1350,
+        "n_gold": 1350
+      }
+    },
+    "partial": {
+      "ACTIVITY": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1350,
+        "n_pred": 1350,
+        "n_gold": 1350
+      },
+      "HAZARD": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1198,
+        "n_pred": 1198,
+        "n_gold": 1198
+      },
+      "BARRIER": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1138,
+        "n_pred": 1138,
+        "n_gold": 1138
+      },
+      "EXPOSURE": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1350,
+        "n_pred": 1350,
+        "n_gold": 1350
+      },
+      "LOCATION": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 1350,
+        "n_pred": 1350,
+        "n_gold": 1350
+      }
+    }
+  },
+  "trained_at": "2026-09-09T10:27:40Z"
+}

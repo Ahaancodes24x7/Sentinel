@@ -42,6 +42,26 @@ def _legacy_barrier_label(status: Optional[str]) -> str:
     return legacy_map.get(norm, norm)
 
 
+def _barrier_for_energy(energy_type: Optional[str]) -> str:
+    """Which safety-critical barrier controls this energy type (ontology lookup)."""
+    try:
+        from sif_engine.data_generation.ontology import barrier_for
+
+        return barrier_for(str(energy_type or ""))
+    except Exception:
+        return "Permit to work"
+
+
+def _barrier_is_direct(barrier_type: str) -> bool:
+    """SCL direct-control test: effective even under foreseeable human error."""
+    try:
+        from sif_engine.data_generation.ontology import is_direct_control
+
+        return is_direct_control(barrier_type)
+    except Exception:
+        return True
+
+
 def reason(
     evidence: dict[str, Any],
     energy_classification: dict[str, Any],
@@ -99,7 +119,14 @@ def reason(
     elif barrier_status == "confirmed_present":
         has_barrier_gap = False
     elif barrier_status == "not_mentioned":
-        has_barrier_gap = False
+        # Absence of mention is NOT evidence of presence. Reading an unrecorded
+        # barrier as a confirmed one is exactly how a live precursor gets filed
+        # as harmless, and it is the failure mode the SCL model and the research
+        # blueprint both single out. So this counts as an (unconfirmed) gap for
+        # the SIF decision, while ALSO raising the needs-more-info flag so the
+        # report is routed to a human to close the evidence gap rather than the
+        # model quietly guessing either way.
+        has_barrier_gap = True
         candidate_needs_info = True
 
     # -----------------------------------------------------------------------
@@ -139,8 +166,18 @@ def reason(
         (is_valid_near_miss and is_high_energy and is_direct_exposure and barrier_status != "confirmed_present")
     )
 
+    # SCL "direct control" test. A control counts as clearing the exposure only
+    # if it remains effective under foreseeable human error - a mechanical or
+    # engineering barrier. A confirmed ADMINISTRATIVE control (a permit, a
+    # journey management plan) does not clear a high-energy exposure the way an
+    # engineering one does, so a confirmed permit alone must not zero out the
+    # SIF decision.
+    controlling_barrier = _barrier_for_energy(energy_label)
+    barrier_is_direct = _barrier_is_direct(controlling_barrier)
     if barrier_status == "confirmed_present":
-        sif_potential = False
+        sif_potential = bool(
+            is_high_energy and has_exposure and not barrier_is_direct
+        )
 
     if sif_potential or candidate_needs_info:
         lsr_tag = consequence_info.get("lsr_tag") or lsr_tag_candidate
@@ -167,6 +204,17 @@ def reason(
             ev_str = f" (evidence: {barrier_evidence_phrases})" if barrier_evidence_phrases else ""
             justification_parts.append(
                 f"Barrier status is uncertain or unverified (gap severity: 0.6 — requires supervisor review).{ev_str}"
+            )
+        elif barrier_status == "not_mentioned":
+            # State the evidence gap explicitly. The reviewer needs to know the
+            # flag rests on an ABSENT record rather than on observed failure -
+            # that is the difference between "go and verify the isolation" and
+            # "the isolation failed", and it is also what tells the reporting
+            # team their form is missing a field people skip.
+            justification_parts.append(
+                "Report omitted barrier controls entirely: no control was confirmed, so the "
+                "exposure is unmitigated on the available evidence. Absence of mention is not "
+                "read as a confirmed barrier — barrier verification required."
             )
         justification_parts.append(f"Personnel exposure confirmed ({exposure_label}).")
         justification_parts.append(f"Credible consequence: {consequence_info.get('primary_consequence')}.")
@@ -206,6 +254,7 @@ def reason(
         "has_barrier_gap": has_barrier_gap,
         "has_exposure": has_exposure,
         "is_direct_exposure": is_direct_exposure,
+        "exposure_label": exposure_label,
         "gap_severity": gap_severity,
         "barrier_status": barrier_status,
         "energy_source": energy_source,

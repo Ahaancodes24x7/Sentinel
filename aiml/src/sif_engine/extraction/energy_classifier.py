@@ -14,15 +14,23 @@ import re
 # ---------------------------------------------------------------------------
 # Canonical Ontology Mapping
 # ---------------------------------------------------------------------------
-ENERGY_TYPE_METADATA = {
-    "stored/electrical energy": {"is_high_energy": True, "lsr_tag": "Energy Isolation"},
-    "thermal (hot work)": {"is_high_energy": True, "lsr_tag": "Hot Work"},
-    "gravitational (suspended load)": {"is_high_energy": True, "lsr_tag": "Safe Mechanical Lifting"},
-    "kinetic (line of fire)": {"is_high_energy": True, "lsr_tag": "Line of Fire"},
-    "atmospheric/asphyxiation": {"is_high_energy": True, "lsr_tag": "Confined Space"},
-    "vehicular/motion": {"is_high_energy": True, "lsr_tag": "Driving"},
-    "fall from height": {"is_high_energy": True, "lsr_tag": "Working at Height"},
-    "low-energy/ergonomic": {"is_high_energy": False, "lsr_tag": "Work Authorisation"},
+# ---------------------------------------------------------------------------
+# Canonical Ontology Mapping  (config-driven: configs/ontology.yaml)
+#
+# These tables used to be hardcoded here, which meant adding an energy type to
+# the ontology silently left this classifier behind and the two disagreed about
+# what "high energy" meant. They are now derived from the single shared
+# taxonomy file, so the mapping can never drift between the reasoner, the
+# generator and the backend.
+# ---------------------------------------------------------------------------
+from sif_engine.data_generation.ontology import (  # noqa: E402
+    ENERGY_TYPES as _ONT_ENERGY_TYPES,
+    energy_keywords as _ont_energy_keywords,
+)
+
+ENERGY_TYPE_METADATA: dict[str, dict[str, Any]] = {
+    name: {"is_high_energy": bool(meta["is_high_energy"]), "lsr_tag": meta["lsr_tag"]}
+    for name, meta in _ONT_ENERGY_TYPES.items()
 }
 
 HAZARD_TO_ENERGY_MAP = {
@@ -34,52 +42,58 @@ HAZARD_TO_ENERGY_MAP = {
     "working_at_height": "fall from height",
     "driving": "vehicular/motion",
     "excavation": "stored/electrical energy",
+    "bypassing_safety_controls": "defeated safety system",
+    "pressure": "pressure/hydraulic energy",
+    "chemical": "chemical/toxic exposure",
+    "radiation": "radiation (NORM/radiography)",
 }
 
-LSR_TO_ENERGY_MAP = {
-    "Energy Isolation": "stored/electrical energy",
-    "Hot Work": "thermal (hot work)",
-    "Safe Mechanical Lifting": "gravitational (suspended load)",
-    "Line of Fire": "kinetic (line of fire)",
-    "Confined Space": "atmospheric/asphyxiation",
-    "Driving": "vehicular/motion",
-    "Working at Height": "fall from height",
-    "Work Authorisation": "low-energy/ergonomic",
-    "Bypassing Safety Controls": "stored/electrical energy",
-}
+# LSR -> a representative energy type. Several energy types can share one rule
+# (e.g. electrical and pressure both map to Energy Isolation), so this reverse
+# lookup deliberately keeps the FIRST declared member as the representative.
+LSR_TO_ENERGY_MAP: dict[str, str] = {}
+for _name, _meta in _ONT_ENERGY_TYPES.items():
+    LSR_TO_ENERGY_MAP.setdefault(_meta["lsr_tag"], _name)
 
-# Explicit high-energy rule indicators (LSR high-energy hazard triggers)
-HIGH_ENERGY_RULE_INDICATORS = {
+# Hand-curated high-energy cues, layered on top of the ontology keywords.
+# The ontology supplies breadth; these add phrasings observed in real incident
+# narratives that are too specific to live in the shared taxonomy.
+_CURATED_CUES: dict[str, list[str]] = {
     "stored/electrical energy": [
-        "electrical", "energized", "live circuit", "live wire", "switchboard",
-        "breaker", "isolation failure", "high voltage", "capacitor", "arc flash",
-        "power line", "transformer"
+        "live circuit", "live wire", "switchboard", "isolation failure",
+        "high voltage", "arc flash", "power line",
     ],
-    "thermal (hot work)": [
-        "welding", "cutting torch", "grinding", "open flame", "torch", "hot work",
-        "flammable vapor", "spark ignition"
-    ],
+    "thermal (hot work)": ["open flame", "torch", "spark ignition"],
     "gravitational (suspended load)": [
-        "suspended load", "crane lift", "overhead lift", "rigging", "hoist line",
-        "dropped object", "derrick lift", "winch cable"
+        "crane lift", "overhead lift", "hoist line", "derrick lift", "winch cable",
     ],
     "kinetic (line of fire)": [
-        "line of fire", "high pressure line", "kickback", "whip check",
-        "pressurized hose", "rotating equipment", "pinch point", "flying debris"
+        "high pressure line", "kickback", "whip check", "pressurized hose",
+        "pinch point", "flying debris",
     ],
-    "atmospheric/asphyxiation": [
-        "confined space", "h2s", "toxic gas", "oxygen deficient", "asphyxiation",
-        "inert atmosphere", "tank entry", "vessel purge"
-    ],
-    "vehicular/motion": [
-        "heavy vehicle", "forklift", "truck reversing", "mobile plant",
-        "vehicle rollover", "transport collision"
-    ],
-    "fall from height": [
-        "working at height", "elevated platform", "scaffolding", "ladder fall",
-        "roof edge", "derrick mast", "fall arrest", "manlift"
-    ],
+    "mechanical/rotating equipment": ["pinch point", "unguarded shaft", "caught between"],
+    "atmospheric/asphyxiation": ["toxic gas", "asphyxiation", "inert atmosphere", "vessel purge"],
+    "vehicular/motion": ["heavy vehicle", "truck reversing", "vehicle rollover", "transport collision"],
+    "fall from height": ["working at height", "ladder fall", "roof edge", "manlift"],
+    "pressure/hydraulic energy": ["stored pressure", "line not depressurised", "pressure test"],
+    "flammable/explosive atmosphere": ["gas cloud", "vapour cloud", "hydrocarbon leak"],
+    "defeated safety system": ["safety system disabled", "protection defeated", "alarm suppressed"],
+    "chemical/toxic exposure": ["chemical burn", "chemical splash"],
+    "radiation (NORM/radiography)": ["radiation source", "exposed source"],
 }
+
+HIGH_ENERGY_RULE_INDICATORS: dict[str, list[str]] = {}
+for _et, _meta in _ONT_ENERGY_TYPES.items():
+    if not _meta.get("is_high_energy"):
+        continue          # the gate only fires on HIGH-energy evidence
+    _cues = {str(k).lower() for k in _ont_energy_keywords().get(_et, [])}
+    _cues.update(c.lower() for c in _CURATED_CUES.get(_et, []))
+    # Single very generic tokens cause false positives ("guard", "pressure",
+    # "chemical" appear in safe reports too); require a multi-word or
+    # distinctive cue for the gate to fire.
+    HIGH_ENERGY_RULE_INDICATORS[_et] = sorted(
+        c for c in _cues if (" " in c or len(c) >= 6)
+    )
 
 
 def evaluate_high_energy_gate(raw_text: str, hazard_category: Optional[str] = None) -> dict[str, Any]:
