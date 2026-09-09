@@ -104,33 +104,88 @@ def model_info() -> dict[str, Any]:
 
 
 def _rule_fallback(text: str) -> dict[str, Any]:
-    """Deterministic extraction when no transformer artefact is available."""
+    """Deterministic extraction when no transformer artefact is available.
+
+    Reads the actual shape `extract_evidence` returns. The previous version
+    looked for an "evidence_spans" key that function has never produced — that
+    key is assembled downstream in pipeline.py — so this silently returned zero
+    spans on every machine without the fine-tuned model, which is most of them.
+    A fallback that quietly extracts nothing is worse than no fallback: the
+    caller cannot tell "no entities here" from "I did not run".
+    """
     try:
         from sif_engine.extraction.evidence_extractor import extract_evidence
-
-        ev = extract_evidence(text)
-        spans: list[dict[str, Any]] = []
-        for item in ev.get("evidence_spans", []) or []:
-            label = str(item.get("field", "")).upper()
-            mapping = {
-                "ACTIVITY": "ACTIVITY", "HAZARD": "HAZARD", "BARRIER": "BARRIER",
-                "BARRIER_STATUS": "BARRIER", "EXPOSURE": "EXPOSURE",
-                "LOCATION": "LOCATION",
-            }
-            if label not in mapping:
-                continue
-            span = item.get("span")
-            if not span:
-                continue
-            spans.append({
-                "label": mapping[label],
-                "text": item.get("text", ""),
-                "span": [int(span[0]), int(span[1])],
-                "confidence": float(item.get("confidence", 0.7)),
-            })
-        return {"spans": spans, "source": "rule_fallback"}
     except Exception:
         return {"spans": [], "source": "unavailable"}
+
+    try:
+        ev = extract_evidence(text)
+    except Exception:
+        return {"spans": [], "source": "unavailable"}
+
+    spans: list[dict[str, Any]] = []
+
+    def add(label: str, span_text: Any, offsets: Any, confidence: float) -> None:
+        if not span_text or not offsets:
+            return
+        try:
+            start, end = int(offsets[0]), int(offsets[1])
+        except (TypeError, IndexError, ValueError):
+            return
+        if end <= start or end > len(text):
+            return
+        # Only emit a span whose offsets really do slice back to its own text,
+        # so the highlighting contract holds for the fallback exactly as it
+        # does for the transformer.
+        if text[start:end] != span_text:
+            return
+        spans.append({
+            "label": label,
+            "text": span_text,
+            "span": [start, end],
+            "confidence": round(float(confidence), 4),
+        })
+
+    activity = ev.get("activity") or {}
+    add("ACTIVITY", activity.get("text"), activity.get("span"),
+        activity.get("confidence", 0.6))
+
+    location = ev.get("location") or {}
+    add("LOCATION", location.get("text"), location.get("span"),
+        location.get("confidence", 0.9))
+
+    exposure = ev.get("exposure") or {}
+    for item in (exposure.get("evidence") or []):
+        add("EXPOSURE", getattr(item, "text", None), getattr(item, "span", None),
+            exposure.get("confidence", 0.7))
+
+    barrier = ev.get("barrier")
+    for item in (getattr(barrier, "evidence", None) or []):
+        add("BARRIER", getattr(item, "text", None), getattr(item, "span", None),
+            getattr(barrier, "confidence", 0.7))
+
+    hazard = ev.get("hazard") or {}
+    for _category, items in (hazard.get("matches") or {}).items():
+        for item in items or []:
+            add("HAZARD", getattr(item, "text", None), getattr(item, "span", None), 0.75)
+
+    # Drop shorter spans nested inside a longer one of the same label - the cue
+    # lists deliberately overlap ("within the immediate" inside "within the
+    # immediate hazard zone") and only the widest match is useful to highlight.
+    spans.sort(key=lambda s: (s["span"][0], -(s["span"][1] - s["span"][0])))
+    kept: list[dict[str, Any]] = []
+    for span in spans:
+        if any(
+            other["label"] == span["label"]
+            and other["span"][0] <= span["span"][0]
+            and other["span"][1] >= span["span"][1]
+            for other in kept
+        ):
+            continue
+        kept.append(span)
+
+    kept.sort(key=lambda s: s["span"][0])
+    return {"spans": kept, "source": "rule_fallback"}
 
 
 def extract_spans(text: str, min_score: float = 0.35) -> dict[str, Any]:
