@@ -5,6 +5,7 @@ import { MainLayout } from './layouts/MainLayout';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { OperationsMapPage } from './pages/OperationsMapPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SubmitReportPage } from './pages/SubmitReportPage';
 import { ReportDetailPage } from './pages/ReportDetailPage';
@@ -63,6 +64,7 @@ export function App() {
             }
           >
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/operations-map" element={<OperationsMapPage />} />
             <Route path="/live-vision" element={<LiveVisionPage />} />
             <Route path="/submit" element={<SubmitReportPage />} />
             <Route path="/reports" element={<ReportsPage />} />

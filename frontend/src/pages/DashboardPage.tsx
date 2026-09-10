@@ -15,9 +15,18 @@ import {
 } from '../components/kinetic';
 import { Hint, HelpDot, HINTS } from '../components/common/Hint';
 import { EmptyPanel, NoDataYet, PanelLoading, QueryError } from '../components/common/QueryState';
-import { useClusters, useRankings, useReviewQueue, useSummary, useTrends } from '../api/hooks';
+import {
+  useClusters,
+  useRankings,
+  useReviewQueue,
+  useSiteDetail,
+  useSummary,
+  useTrends,
+} from '../api/hooks';
 import { BUCKET_META, type Bucket } from '../api/types';
 import { cn } from '../lib/cn';
+import { ALL_SITES, useSelectedSite, useSiteUrlSync } from '../lib/siteContext';
+import { DemoDataNotice } from '../components/map/OperationsMap';
 
 const BUCKET_TONE: Record<Bucket, Tone> = {
   HIGH_CONF_SIF: 'critical',
@@ -89,8 +98,8 @@ function MetricTile({
 
 /* -------------------------------------------------------------------------- */
 
-function PriorityStream() {
-  const { data, isLoading, error } = useReviewQueue(undefined, 'newest', 40);
+function PriorityStream({ site }: { site?: string }) {
+  const { data, isLoading, error } = useReviewQueue(site, 'newest', 40);
   const items = data?.items ?? [];
 
   return (
@@ -241,8 +250,72 @@ function SiteRanking() {
 
 /* -------------------------------------------------------------------------- */
 
-function TrendStrip() {
-  const { data, isLoading, error } = useTrends();
+/**
+ * Replaces the cross-site ranking panel when a single demonstration site is
+ * selected — ranking one site against itself is meaningless, so this shows
+ * what a site-scoped view actually needs: its own density, top rule and
+ * barrier profile, all computed server-side over that site's reports.
+ */
+function SiteFocus({ siteId, siteName }: { siteId: string; siteName: string }) {
+  const { data, isLoading, error } = useSiteDetail(siteId);
+
+  return (
+    <ScanPanel className="flex h-full flex-col">
+      <PanelHead
+        title={`${siteName.toUpperCase()} SITE INTELLIGENCE`}
+        sub="Precursor density and barrier profile, this site only"
+        right={
+          <Link
+            to="/operations-map"
+            className="font-mono text-2xs tracked text-hivis hover:underline"
+          >
+            MAP →
+          </Link>
+        }
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {isLoading ? (
+          <PanelLoading rows={5} />
+        ) : error || !data ? (
+          <QueryError error={error} compact />
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <div className="flex justify-between font-mono text-2xs text-ink-4">
+                <span>PRECURSOR DENSITY</span>
+                <span className="tabular text-ink-2">
+                  {(data.precursor_density * 100).toFixed(1)}%
+                </span>
+              </div>
+              <Bar value={data.precursor_density} tone="hivis" className="mt-1" />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {Object.entries(data.barrier_profile).map(([k, v]) => (
+                <div key={k} className="rounded-md border border-line bg-surface-2 px-2 py-1.5 text-center">
+                  <div className="font-mono text-lg tabular text-ink">{v}</div>
+                  <div className="font-mono text-[8px] tracked text-ink-4">
+                    {k.replace(/_/g, ' ').toUpperCase()}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {data.top_lsrs.slice(0, 3).map((l) => (
+              <div key={l.lsr} className="flex items-center justify-between gap-2">
+                <span className="truncate text-xs text-ink-2">{l.lsr}</span>
+                <span className="font-mono text-2xs tabular text-ink-4">{l.count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </ScanPanel>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+function TrendStrip({ site }: { site?: string }) {
+  const { data, isLoading, error } = useTrends(site);
   const series = data?.series ?? [];
   const alerts = data?.alerts ?? [];
   const baseline = data?.cusum?.baseline_mean ?? 0;
@@ -330,8 +403,13 @@ function TrendStrip() {
 /* -------------------------------------------------------------------------- */
 
 export function DashboardPage() {
-  const { data: summary, isLoading: sLoading, error: sError } = useSummary();
-  const { data: clusters, isLoading: cLoading } = useClusters(undefined, 3);
+  useSiteUrlSync();
+  const { selectedSite } = useSelectedSite();
+  const siteScoped = selectedSite.site_id !== ALL_SITES.site_id;
+  const siteParam = siteScoped ? selectedSite.site_id : undefined;
+
+  const { data: summary, isLoading: sLoading, error: sError } = useSummary(siteParam);
+  const { data: clusters, isLoading: cLoading } = useClusters(siteParam, 3);
 
   const emerging = (clusters?.clusters ?? []).filter((c) => c.pattern_type === 'emerging').length;
   const pending = summary?.reports_pending_review ?? 0;
@@ -351,14 +429,17 @@ export function DashboardPage() {
         <div>
           <div className="flex items-center gap-2">
             <PulseDot tone="hivis" size={7} />
-            <span className="font-mono text-2xs tracked text-ink-4">SIF ACTION CENTER · LIVE</span>
+            <span className="font-mono text-2xs tracked text-ink-4">
+              SENTINEL / {siteScoped ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'} · LIVE
+            </span>
           </div>
           <h1 className="mt-1.5 font-display text-5xl text-ink">
             Precursor <span className="text-hivis">Watch</span>
           </h1>
           <p className="mt-1.5 max-w-xl text-sm text-ink-3">
-            Reports describing a situation that could have killed someone — including the ones where
-            nobody was hurt.
+            {siteScoped
+              ? `Reports describing a situation that could have killed someone at ${selectedSite.canonical_name} — including the ones where nobody was hurt.`
+              : 'Reports describing a situation that could have killed someone — including the ones where nobody was hurt.'}
           </p>
         </div>
 
@@ -383,6 +464,8 @@ export function DashboardPage() {
           </Hint>
         </div>
       </div>
+
+      {siteScoped && <DemoDataNotice />}
 
       {/* Three metrics, not four */}
       <Stagger className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -419,12 +502,16 @@ export function DashboardPage() {
 
       {/* Two panels side by side */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <PriorityStream />
-        <SiteRanking />
+        <PriorityStream site={siteParam} />
+        {siteScoped ? (
+          <SiteFocus siteId={selectedSite.site_id} siteName={selectedSite.canonical_name} />
+        ) : (
+          <SiteRanking />
+        )}
       </div>
 
       {/* One full-width trend */}
-      <TrendStrip />
+      <TrendStrip site={siteParam} />
     </div>
   );
 }

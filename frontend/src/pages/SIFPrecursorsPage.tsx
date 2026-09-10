@@ -5,6 +5,7 @@ import { Chip, Counter, PanelHead, PulseDot, ScanPanel, type Tone } from '../com
 import { EmptyPanel, NoDataYet, PanelLoading, QueryError } from '../components/common/QueryState';
 import { useReports, useSummary } from '../api/hooks';
 import { BUCKET_META, type Bucket } from '../api/types';
+import { ALL_SITES, useSelectedSite } from '../lib/siteContext';
 
 const BUCKET_TONE: Record<Bucket, Tone> = {
   HIGH_CONF_SIF: 'critical',
@@ -14,8 +15,10 @@ const BUCKET_TONE: Record<Bucket, Tone> = {
 };
 
 export function SIFPrecursorsPage() {
-  const { data, isLoading, error } = useReports({ sif_potential: true, limit: 60 });
-  const { data: summary } = useSummary();
+  const { selectedSite } = useSelectedSite();
+  const siteParam = selectedSite.site_id !== ALL_SITES.site_id ? selectedSite.site_id : undefined;
+  const { data, isLoading, error } = useReports({ site: siteParam, sif_potential: true, limit: 60 });
+  const { data: summary } = useSummary(siteParam);
   const items = data?.items ?? [];
 
   return (
@@ -25,7 +28,8 @@ export function SIFPrecursorsPage() {
           <div className="flex items-center gap-2">
             <PulseDot tone="critical" size={7} />
             <span className="font-mono text-2xs tracked text-ink-4">
-              REQUIREMENT (A) · CLASSIFICATION
+              REQUIREMENT (A) · CLASSIFICATION ·{' '}
+              {siteParam ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
             </span>
           </div>
           <h1 className="mt-1.5 font-display text-4xl text-ink">SIF Precursors</h1>

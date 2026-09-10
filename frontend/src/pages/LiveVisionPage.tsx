@@ -51,9 +51,10 @@ function roiStrokeColor(roiType: string): string {
 
 export function LiveVisionPage() {
   const { selectedSite } = useSelectedSite();
+  const siteChosen = selectedSite.site_id !== 'all';
 
   const { data: camerasData, isLoading: camerasLoading, error: camerasError } = useVisionCameras(
-    selectedSite.site_id,
+    siteChosen ? selectedSite.site_id : undefined,
   );
   const cameras = camerasData?.cameras ?? [];
   const [cameraId, setCameraId] = useState<string>('');
@@ -282,6 +283,29 @@ export function LiveVisionPage() {
   const vehicleCount = status?.vehicle_count ?? 0;
   const activeHazards = status?.active_hazards ?? 0;
   const highPriority = status?.high_priority_hazards ?? 0;
+
+  if (!siteChosen) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <PulseDot tone="hivis" size={7} />
+            <span className="font-mono text-2xs tracked text-ink-4">LIVE SAFETY VISION</span>
+          </div>
+          <h1 className="mt-1.5 font-display text-5xl text-ink">
+            Camera <span className="text-hivis">Watch</span>
+          </h1>
+        </div>
+        <ScanPanel>
+          <EmptyPanel
+            icon={Video}
+            title="Select a demonstration site"
+            message="Live Safety Vision's demo camera list is scoped to one site at a time. Pick Duliajan, Digboi or Moran from the site selector above or the Operations Map."
+          />
+        </ScanPanel>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

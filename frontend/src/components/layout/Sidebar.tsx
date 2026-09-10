@@ -10,6 +10,7 @@ import {
   GitBranch,
   LayoutDashboard,
   ListChecks,
+  MapPinned,
   PenSquare,
   Radar,
   ScrollText,
@@ -46,6 +47,12 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Daily',
     items: [
+      {
+        to: '/operations-map',
+        label: 'Operations Map',
+        icon: MapPinned,
+        hint: 'Interactive site map for Duliajan, Digboi and Moran. Select a site to scope every screen to it.',
+      },
       {
         to: '/dashboard',
         label: 'Action Center',

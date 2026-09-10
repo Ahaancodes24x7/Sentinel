@@ -16,6 +16,7 @@ import { EmptyPanel, NoDataYet, PanelLoading, QueryError } from '../components/c
 import { useReviewQueue, useSummary } from '../api/hooks';
 import { BUCKET_META, type Bucket } from '../api/types';
 import { cn } from '../lib/cn';
+import { ALL_SITES, useSelectedSite } from '../lib/siteContext';
 
 const BUCKET_TONE: Record<Bucket, Tone> = {
   HIGH_CONF_SIF: 'critical',
@@ -27,9 +28,11 @@ const BUCKET_TONE: Record<Bucket, Tone> = {
 type SortKey = 'oldest' | 'newest' | 'confidence_asc';
 
 export function ReviewQueuePage() {
+  const { selectedSite } = useSelectedSite();
+  const siteParam = selectedSite.site_id !== ALL_SITES.site_id ? selectedSite.site_id : undefined;
   const [sort, setSort] = useState<SortKey>('oldest');
-  const { data, isLoading, error, isFetching } = useReviewQueue(undefined, sort, 60);
-  const { data: summary } = useSummary();
+  const { data, isLoading, error, isFetching } = useReviewQueue(siteParam, sort, 60);
+  const { data: summary } = useSummary(siteParam);
 
   const items = data?.items ?? [];
   const counts = (summary?.bucket_counts as Record<string, number>) ?? {};
@@ -45,7 +48,8 @@ export function ReviewQueuePage() {
           <div className="flex items-center gap-2">
             <PulseDot tone="critical" size={7} />
             <span className="font-mono text-2xs tracked text-ink-4">
-              HUMAN-IN-THE-LOOP · LIVE QUEUE
+              HUMAN-IN-THE-LOOP · LIVE QUEUE ·{' '}
+              {siteParam ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
             </span>
           </div>
           <h1 className="mt-1.5 font-display text-4xl text-ink">Review Queue</h1>

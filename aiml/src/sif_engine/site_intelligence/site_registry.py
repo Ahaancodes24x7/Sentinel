@@ -442,6 +442,31 @@ def get_all_sites() -> list[dict[str, Any]]:
     ]
 
 
+def get_report_site_values(site_id_or_name: str) -> list[str]:
+    """Resolve a site id/alias/canonical name into every raw `report.site`
+    string value that belongs to it, for filtering the report corpus.
+
+    The synthetic 25k-report corpus is tagged at the demonstration-unit level
+    (e.g. "Rig 4", "Plant C", "Terminal A") rather than with the real OIL
+    India location name directly. Each unit's `parent_asset` links it to one
+    of the real locations (duliajan / digboi / moran / ...). So a request to
+    filter by "duliajan" must expand to that site's own canonical name plus
+    every unit whose parent_asset is duliajan — otherwise a real-site filter
+    would silently match zero reports even though its demonstration units
+    have plenty. A request for a single unit (e.g. "Rig 4") still resolves to
+    just that one value, so existing unit-level filters are unaffected.
+    """
+    info = get_site_by_id(site_id_or_name)
+    if not info:
+        return [site_id_or_name]
+    target_id = info["site_id"]
+    values = {info["canonical_name"]}
+    for s in SITE_REGISTRY.values():
+        if s.site_id == target_id or s.parent_asset == target_id:
+            values.add(s.canonical_name)
+    return sorted(values)
+
+
 def get_site_by_id(site_id_or_name: str) -> Optional[dict[str, Any]]:
     """Look up a site by site_id or canonical name."""
     cleaned = site_id_or_name.strip().lower()

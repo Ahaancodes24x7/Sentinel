@@ -231,6 +231,47 @@ export interface RecommendationDetail {
   expected_objective: string;
 }
 
+/* -------------------------------------------------------------------------
+ * Site registry / Operations Map
+ * ---------------------------------------------------------------------- */
+
+export interface SiteSummaryItem {
+  site_id: string;
+  canonical_name: string;
+  region: string;
+  state: string;
+  facility_type: string;
+  latitude: number;
+  longitude: number;
+  is_synthetic_prototype: boolean;
+  parent_asset?: string | null;
+  description: string;
+  demonstration_notice: string;
+}
+
+export interface SiteListResponse {
+  sites: SiteSummaryItem[];
+}
+
+export interface SiteDetailResponse {
+  site: string;
+  site_id: string;
+  region: string;
+  state: string;
+  facility_type: string;
+  total_reports: number;
+  sif_precursor_count: number;
+  precursor_density: number;
+  density_formula: string;
+  top_lsrs: { lsr: string; count: number; share: number }[];
+  top_activities: { activity: string; count: number }[];
+  barrier_profile: Record<string, number>;
+  trend_direction: 'up' | 'down' | 'flat';
+  trend_pct: number;
+  is_synthetic_prototype: boolean;
+  demonstration_notice: string;
+}
+
 export interface HealthResponse {
   status: string;
   model_version: string;

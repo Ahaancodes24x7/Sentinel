@@ -491,5 +491,221 @@ def test_strict_database_enforcement(monkeypatch):
     assert "silent fallback to SQLite is disabled" in str(exc_info.value)
 
 
+# ---------------------------------------------------------------------------
+# Operations Map / three-site demo layer
+#
+# Duliajan, Digboi and Moran are real OIL India locations used as geographic
+# demonstration metadata (see aiml/src/sif_engine/site_intelligence/
+# site_registry.py). The 25k-report synthetic corpus is tagged at the
+# demonstration-unit level ("Rig 4", "Plant C", "Terminal A", ...), each
+# linked to one of these real locations via `parent_asset`. These tests cover
+# the resolution/filtering layer that lets a request for a real location
+# reach the demonstration units that roll up to it, without ever inventing
+# report data or leaking another site's reports into a site-scoped view.
+# ---------------------------------------------------------------------------
+DEMO_SITE_IDS = ["duliajan", "digboi", "moran"]
+
+
+def test_operations_map_sites_exist_with_valid_coordinates(client, hse_reviewer_token):
+    """1 & 2. Duliajan, Digboi and Moran are registered with plausible lat/lon."""
+    res = client.get(
+        "/api/v1/sites",
+        headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+    )
+    assert res.status_code == 200
+    sites_by_id = {s["site_id"]: s for s in res.json()["sites"]}
+
+    for site_id in DEMO_SITE_IDS:
+        assert site_id in sites_by_id, f"{site_id} missing from /sites registry"
+        site = sites_by_id[site_id]
+        assert site["state"] == "Assam"
+        assert site["is_synthetic_prototype"] is False, "real OIL location, not a demo unit"
+        # Upper Assam basin — a loose bounding box, just enough to catch a
+        # transposed lat/lon or a placeholder (0, 0) coordinate.
+        assert 26.0 <= site["latitude"] <= 28.0
+        assert 94.0 <= site["longitude"] <= 96.5
+
+
+def test_site_filter_resolves_demonstration_units_to_real_site(
+    client, hse_manager_token, hse_reviewer_token
+):
+    """3, 4, 5, 10. Filtering by a real site id reaches its demo units and
+    excludes reports belonging to a different real site (no cross-site leakage)."""
+    payload = {
+        "reports": [
+            {
+                "report_id": "map_test_duliajan_01",
+                "site": "Rig 4",  # parent_asset = duliajan
+                "report_text": "Crew performing valve maintenance at Rig 4 process skid.",
+                "source": "synthetic",
+            },
+            {
+                "report_id": "map_test_duliajan_02",
+                "site": "Plant C",  # parent_asset = duliajan
+                "report_text": "Gas compression trip investigated at Plant C.",
+                "source": "synthetic",
+            },
+            {
+                "report_id": "map_test_digboi_01",
+                "site": "Terminal A",  # parent_asset = digboi
+                "report_text": "Tanker loading observed at Terminal A dispatch bay.",
+                "source": "synthetic",
+            },
+            {
+                "report_id": "map_test_moran_01",
+                "site": "Rig 7",  # parent_asset = moran
+                "report_text": "Night shift handover reviewed at Rig 7 wellsite.",
+                "source": "synthetic",
+            },
+        ]
+    }
+    ingest_res = client.post(
+        "/api/v1/reports/ingest",
+        json=payload,
+        headers={"Authorization": f"Bearer {hse_manager_token}"},
+    )
+    assert ingest_res.status_code == 202
+
+    def report_ids_for(site_id: str) -> set[str]:
+        res = client.get(
+            f"/api/v1/reports?site={site_id}&limit=200",
+            headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+        )
+        assert res.status_code == 200
+        return {item["report_id"] for item in res.json()["items"]}
+
+    duliajan_ids = report_ids_for("duliajan")
+    digboi_ids = report_ids_for("digboi")
+    moran_ids = report_ids_for("moran")
+
+    # Duliajan's two demo units (Rig 4, Plant C) both roll up.
+    assert {"map_test_duliajan_01", "map_test_duliajan_02"} <= duliajan_ids
+    # No cross-site leakage: Digboi's and Moran's reports never appear under Duliajan.
+    assert "map_test_digboi_01" not in duliajan_ids
+    assert "map_test_moran_01" not in duliajan_ids
+
+    assert "map_test_digboi_01" in digboi_ids
+    assert "map_test_duliajan_01" not in digboi_ids
+    assert "map_test_moran_01" not in digboi_ids
+
+    assert "map_test_moran_01" in moran_ids
+    assert "map_test_duliajan_01" not in moran_ids
+    assert "map_test_digboi_01" not in moran_ids
+
+
+def test_all_sites_restores_global_report_view(client, hse_manager_token, hse_reviewer_token):
+    """6. Omitting the site filter (ALL SITES) returns reports across multiple sites."""
+    payload = {
+        "reports": [
+            {
+                "report_id": "map_test_all_a",
+                "site": "Rig 4",
+                "report_text": "Housekeeping issue noted near the Rig 4 mud pit.",
+                "source": "synthetic",
+            },
+            {
+                "report_id": "map_test_all_b",
+                "site": "Rig 7",
+                "report_text": "Lifting operation observed at Rig 7 without a banksman present.",
+                "source": "synthetic",
+            },
+        ]
+    }
+    res = client.post(
+        "/api/v1/reports/ingest",
+        json=payload,
+        headers={"Authorization": f"Bearer {hse_manager_token}"},
+    )
+    assert res.status_code == 202
+
+    all_res = client.get(
+        "/api/v1/reports?limit=200",
+        headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+    )
+    assert all_res.status_code == 200
+    all_ids = {item["report_id"] for item in all_res.json()["items"]}
+    assert {"map_test_all_a", "map_test_all_b"} <= all_ids
+    sites_seen = {item["site"] for item in all_res.json()["items"]}
+    assert len(sites_seen) > 1, "ALL SITES must not be narrowed to a single site"
+
+
+def test_site_statistics_are_derived_from_reports(client, hse_manager_token, hse_reviewer_token):
+    """9. /sites/{site_id} counts are computed from the actual report corpus, not fabricated."""
+    ingest_res = client.post(
+        "/api/v1/reports/ingest",
+        json={
+            "reports": [
+                {
+                    "report_id": "map_test_stats_01",
+                    "site": "Terminal A",  # parent_asset = digboi
+                    "report_text": (
+                        "Loading arm connected without confirming isolation valve position; "
+                        "operator stood in the line of fire during pressurization."
+                    ),
+                    "source": "synthetic",
+                }
+            ]
+        },
+        headers={"Authorization": f"Bearer {hse_manager_token}"},
+    )
+    assert ingest_res.status_code == 202
+
+    before = client.get(
+        "/api/v1/reports?site=digboi&limit=1",
+        headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+    ).json()["total"]
+
+    detail_res = client.get(
+        "/api/v1/sites/digboi",
+        headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+    )
+    assert detail_res.status_code == 200
+    detail = detail_res.json()
+    assert detail["site_id"] == "digboi"
+    assert detail["total_reports"] == before
+    assert detail["total_reports"] >= 1
+    assert detail["demonstration_notice"]
+
+
+def test_dashboard_summary_site_filter_and_all_sites(client, hse_reviewer_token):
+    """ALL SITES vs a single real site never crash and the site-scoped total never
+    exceeds the unfiltered (ALL SITES) total."""
+    all_res = client.get(
+        "/api/v1/dashboard/summary",
+        headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+    )
+    assert all_res.status_code == 200
+    all_total = all_res.json()["total_reports"]
+
+    for site_id in DEMO_SITE_IDS:
+        scoped_res = client.get(
+            f"/api/v1/dashboard/summary?site={site_id}",
+            headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+        )
+        assert scoped_res.status_code == 200
+        scoped = scoped_res.json()
+        assert scoped["total_reports"] <= all_total
+        assert 0.0 <= scoped["sif_rate"] <= 1.0
+
+
+def test_live_safety_vision_cameras_scoped_per_site(client, hse_reviewer_token):
+    """11. Live Safety Vision's camera list follows the selected site and never
+    mixes cameras from a different demonstration site."""
+    seen_camera_ids: set[str] = set()
+    for site_id in DEMO_SITE_IDS:
+        res = client.get(
+            f"/api/v1/vision/cameras?site_id={site_id}",
+            headers={"Authorization": f"Bearer {hse_reviewer_token}"},
+        )
+        assert res.status_code == 200
+        cameras = res.json()["cameras"]
+        assert len(cameras) > 0, f"{site_id} has no demo cameras configured"
+        for cam in cameras:
+            assert cam["site_id"] == site_id
+            assert cam["camera_id"] not in seen_camera_ids
+            seen_camera_ids.add(cam["camera_id"])
+        assert "demonstration" in res.json()["demo_notice"].lower() or "demo" in res.json()["demo_notice"].lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

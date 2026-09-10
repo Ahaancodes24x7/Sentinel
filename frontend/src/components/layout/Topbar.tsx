@@ -77,19 +77,19 @@ function AlertTicker() {
 }
 
 /**
- * Site selector.
+ * Site selector — the ONE source of truth for "which site am I looking at."
  *
- * The demo now spans three real OIL India locations. Switching here drives
- * Live Safety Vision's camera list directly; other screens keep their own
- * independent site filters (which cover the full registry, not just these
- * three) so this selector never silently narrows data someone didn't ask to
- * filter.
+ * The demo spans three real OIL India locations plus an ALL SITES option.
+ * Switching here scopes every site-aware screen (Reports, the dashboard,
+ * patterns, barrier failures, trends, review queue) and Live Safety
+ * Vision's camera list to the chosen site; it shares state with the
+ * Operations Map, so clicking a marker there updates this same selector.
  */
 function SiteSelector() {
   const { selectedSite, setSelectedSiteId, sites } = useSelectedSite();
   return (
     <Hint
-      content="Active OIL India site for this demo. Drives the camera list on Live Safety Vision."
+      content="Active demonstration site. Scopes Reports, the dashboard, patterns, trends and Live Safety Vision's camera list — shared with the Operations Map."
       side="bottom"
     >
       <div className="flex items-center gap-1.5 rounded-sm border border-line-bright px-2 py-1 text-ink-2">

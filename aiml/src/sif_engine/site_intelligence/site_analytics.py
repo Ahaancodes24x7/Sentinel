@@ -16,6 +16,7 @@ from typing import Any, Optional
 from collections import Counter
 from sif_engine.site_intelligence.site_registry import (
     SITE_REGISTRY,
+    get_report_site_values,
     get_site_by_id,
     normalize_site_name,
 )
@@ -125,7 +126,15 @@ def compute_site_analytics(
 
     if target_site_id_or_name:
         target_norm = normalize_site_name(target_site_id_or_name)
-        return _analyze_group(target_norm, site_reports.get(target_norm, []))
+        # Roll up every demonstration unit that belongs to this site (e.g.
+        # "duliajan" -> Rig 4 / Plant C / Plant D / Pipeline Section 9 /
+        # Workshop Central) rather than only reports tagged with the site's
+        # own canonical name, which the synthetic corpus rarely uses directly.
+        member_names = set(get_report_site_values(target_site_id_or_name))
+        matched_reports = [
+            r for name, reps in site_reports.items() if name in member_names for r in reps
+        ]
+        return _analyze_group(target_norm, matched_reports)
 
     # Aggregation across all sites present in the data or registered
     results = []

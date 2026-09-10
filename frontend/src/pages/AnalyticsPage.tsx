@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Activity, TriangleAlert } from 'lucide-react';
+import { Activity, MapPinned, TriangleAlert } from 'lucide-react';
 import { Chip, Counter, PanelHead, PulseDot, ScanPanel } from '../components/kinetic';
 import { EmptyPanel, PanelLoading, QueryError } from '../components/common/QueryState';
-import { useOntology, useTrends } from '../api/hooks';
+import { useTrends } from '../api/hooks';
 import { cn } from '../lib/cn';
+import { ALL_SITES, useSelectedSite } from '../lib/siteContext';
 
 /**
  * SPC view. The chart draws the CUSUM statistic against its decision interval,
@@ -12,10 +14,10 @@ import { cn } from '../lib/cn';
  * stated threshold — not a model output labelled "risk".
  */
 export function AnalyticsPage() {
-  const [site, setSite] = useState<string>('');
+  const { selectedSite } = useSelectedSite();
+  const siteParam = selectedSite.site_id !== ALL_SITES.site_id ? selectedSite.site_id : undefined;
   const [granularity, setGranularity] = useState<'weekly' | 'monthly'>('weekly');
-  const { data, isLoading, error } = useTrends(site || undefined, undefined, granularity);
-  const { data: ontology } = useOntology();
+  const { data, isLoading, error } = useTrends(siteParam, undefined, granularity);
 
   const series = data?.series ?? [];
   const alerts = data?.alerts ?? [];
@@ -41,18 +43,14 @@ export function AnalyticsPage() {
         </div>
 
         <div className="flex gap-2">
-          <select
-            value={site}
-            onChange={(e) => setSite(e.target.value)}
-            className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-xs text-ink focus:border-hivis-edge focus:outline-none"
+          <Link
+            to="/operations-map"
+            className="flex items-center gap-1.5 rounded-md border border-line-bright px-2.5 py-1.5 font-mono text-2xs tracked text-ink-2 transition-colors hover:border-hivis-edge hover:text-hivis"
+            title="Site is set from the Operations Map / site selector — change it there."
           >
-            <option value="">All sites</option>
-            {(ontology?.sites ?? []).map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            <MapPinned className="h-3 w-3" strokeWidth={2.2} />
+            {siteParam ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
+          </Link>
           <div className="flex rounded-md border border-line bg-surface-2 p-0.5">
             {(['weekly', 'monthly'] as const).map((g) => (
               <button

@@ -15,6 +15,7 @@ import { EmptyPanel, PanelLoading, QueryError } from '../components/common/Query
 import { useAssociations, useClusters } from '../api/hooks';
 import type { ClusterItem } from '../api/types';
 import { cn } from '../lib/cn';
+import { ALL_SITES, useSelectedSite } from '../lib/siteContext';
 
 const PATTERN_TONE: Record<string, Tone> = {
   established: 'high',
@@ -143,8 +144,10 @@ function ClusterMap({
 /* -------------------------------------------------------------------------- */
 
 export function PatternsPage() {
-  const { data, isLoading, error } = useClusters(undefined, 3);
-  const { data: assoc } = useAssociations(undefined, 12);
+  const { selectedSite } = useSelectedSite();
+  const siteParam = selectedSite.site_id !== ALL_SITES.site_id ? selectedSite.site_id : undefined;
+  const { data, isLoading, error } = useClusters(siteParam, 3);
+  const { data: assoc } = useAssociations(siteParam, 12);
   const [selected, setSelected] = useState<string | null>(null);
 
   const clusters = data?.clusters ?? [];
@@ -159,7 +162,8 @@ export function PatternsPage() {
         <div className="flex items-center gap-2">
           <PulseDot tone="violet" size={6} />
           <span className="font-mono text-2xs tracked text-ink-4">
-            REQUIREMENT (C) · PATTERN DISCOVERY
+            REQUIREMENT (C) · PATTERN DISCOVERY ·{' '}
+            {siteParam ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
           </span>
         </div>
         <h1 className="mt-1.5 font-display text-4xl text-ink">Precursor Patterns</h1>

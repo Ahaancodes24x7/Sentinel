@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ArrowRight, ArrowUpRight, Boxes, GitBranch, ShieldOff, Zap } from 'lucide-react';
 import { Chip, PulseDot } from '../components/kinetic';
 import { SentinelLogo } from '../components/common/SentinelMark';
+import { DemoDataNotice, OperationsMap } from '../components/map/OperationsMap';
 
 /* --------------------------------------------------------------------------
  * Institutional pass, not a startup landing page.
@@ -254,27 +255,41 @@ export function LandingPage() {
         <div className="mx-auto max-w-6xl px-6 py-14">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <div className="font-mono text-2xs tracked text-ink-4">OPERATIONAL VIEW</div>
-              <h2 className="mt-2 font-display text-2xl text-ink">Demonstration sites</h2>
+              <div className="font-mono text-2xs tracked text-ink-4">OPERATIONAL VIEW · 3 DEMONSTRATION LOCATIONS</div>
+              <h2 className="mt-2 font-display text-2xl text-ink">Operations Map</h2>
             </div>
             <Link
               to="/login"
               className="flex items-center gap-1.5 font-mono text-2xs tracked text-hivis hover:underline"
             >
-              VIEW SITE RISK <ArrowRight className="h-3 w-3" strokeWidth={2.4} />
+              OPEN OPERATIONS MAP <ArrowRight className="h-3 w-3" strokeWidth={2.4} />
             </Link>
           </div>
 
-          <div className="mt-8 divide-y divide-line border-y border-line">
-            {SITES.map((site) => (
-              <div key={site.name} className="flex items-center justify-between gap-4 py-4">
-                <div className="flex items-center gap-3">
-                  <PulseDot tone="hivis" size={6} />
-                  <span className="font-display text-lg text-ink">{site.name}</span>
-                </div>
-                <span className="font-mono text-2xs tracked text-ink-4">{site.role}</span>
+          <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
+            <div className="overflow-hidden rounded-panel border border-line bg-surface p-2 shadow-panel">
+              <OperationsMap interactive={false} height={280} />
+            </div>
+
+            <div className="flex flex-col justify-between">
+              <div className="divide-y divide-line border-y border-line">
+                {SITES.map((site) => (
+                  <div key={site.name} className="flex items-center justify-between gap-4 py-4">
+                    <div className="flex items-center gap-3">
+                      <PulseDot tone="hivis" size={6} live={false} />
+                      <span className="font-display text-lg text-ink">{site.name}</span>
+                    </div>
+                    <span className="font-mono text-2xs tracked text-ink-4">{site.role}</span>
+                  </div>
+                ))}
               </div>
-            ))}
+              <DemoDataNotice className="mt-4" />
+              <p className="mt-2 text-xs leading-relaxed text-ink-4">
+                Site locations are real geographic references. Safety observations, precursor
+                patterns and camera feeds shown for them inside Sentinel are synthetic
+                demonstration data.
+              </p>
+            </div>
           </div>
         </div>
       </section>

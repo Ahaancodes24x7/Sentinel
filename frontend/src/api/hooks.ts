@@ -25,6 +25,8 @@ import type {
   RecommendationListItem,
   ReportDetail,
   ReportListItem,
+  SiteDetailResponse,
+  SiteListResponse,
   TrendsResponse,
   VisionCamerasResponse,
   VisionEventsResponse,
@@ -59,10 +61,10 @@ export function useOntology() {
  * Dashboard
  * ---------------------------------------------------------------------- */
 
-export function useSummary() {
+export function useSummary(site?: string) {
   return useQuery({
-    queryKey: ['summary'],
-    queryFn: () => api.get<DashboardSummary>('/dashboard/summary'),
+    queryKey: ['summary', site],
+    queryFn: () => api.get<DashboardSummary>(`/dashboard/summary${qs({ site })}`),
     refetchInterval: 12000,
   });
 }
@@ -225,11 +227,23 @@ export function useAuditLog(limit = 50) {
   });
 }
 
-export function useSites() {
+export function useSites(enabled = true) {
   return useQuery({
     queryKey: ['sites'],
-    queryFn: () => api.get<{ sites: { site_id: string; canonical_name: string }[] }>('/sites'),
+    queryFn: () => api.get<SiteListResponse>('/sites'),
+    enabled,
     staleTime: Infinity,
+  });
+}
+
+/** Per-site operational risk profile — the Operations Map's site intelligence
+ * panel and marker popover, computed server-side over the real report corpus. */
+export function useSiteDetail(siteId?: string) {
+  return useQuery({
+    queryKey: ['site-detail', siteId],
+    queryFn: () => api.get<SiteDetailResponse>(`/sites/${siteId}`),
+    enabled: Boolean(siteId),
+    staleTime: 30000,
   });
 }
 

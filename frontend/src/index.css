@@ -354,6 +354,86 @@ mark.span-hl {
    animation — every moving element also encodes its state statically.
    ========================================================================== */
 
+/* ==========================================================================
+   Operations Map — Leaflet / OpenStreetMap, restyled to sit in the dark
+   control-room palette instead of the light OSM default. No second tile
+   provider: the CSS filter darkens the same OpenStreetMap raster tiles.
+   ========================================================================== */
+
+.sentinel-leaflet {
+  background: var(--color-void) !important;
+  font-family: var(--font-sans) !important;
+}
+.sentinel-leaflet .leaflet-tile-pane {
+  filter: grayscale(0.55) invert(92%) hue-rotate(180deg) brightness(0.87) contrast(0.92);
+}
+.sentinel-leaflet .leaflet-control-zoom {
+  border: 1px solid var(--color-line-bright) !important;
+  box-shadow: none !important;
+}
+.sentinel-leaflet .leaflet-control-zoom a {
+  background-color: var(--color-surface-2) !important;
+  color: var(--color-ink-2) !important;
+  border-color: var(--color-line) !important;
+}
+.sentinel-leaflet .leaflet-control-zoom a:hover {
+  background-color: var(--color-surface-3) !important;
+  color: var(--color-hivis) !important;
+}
+.sentinel-leaflet .leaflet-control-attribution {
+  background: rgb(11 13 16 / 0.72) !important;
+  color: var(--color-ink-4) !important;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.sentinel-leaflet .leaflet-control-attribution a {
+  color: var(--color-ink-3) !important;
+}
+.sentinel-leaflet .leaflet-popup-content-wrapper {
+  background: var(--color-surface-2) !important;
+  color: var(--color-ink) !important;
+  border: 1px solid var(--color-line-bright);
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-pop) !important;
+}
+.sentinel-leaflet .leaflet-popup-tip {
+  background: var(--color-surface-2) !important;
+  border: 1px solid var(--color-line-bright);
+}
+.sentinel-leaflet .leaflet-popup-content {
+  margin: 0 !important;
+  width: auto !important;
+}
+.sentinel-leaflet .leaflet-popup-close-button {
+  color: var(--color-ink-3) !important;
+}
+
+/* Site marker: a small ring, not a pin — reads as an operational GIS layer
+   rather than a generic map-pin drop icon. Only the selected site pulses. */
+.sentinel-map-marker {
+  position: relative;
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-void);
+  border: 2px solid var(--color-hivis-dim);
+  box-shadow: 0 0 0 3px rgb(212 255 63 / 0.10);
+}
+.sentinel-map-marker.active {
+  border-color: var(--color-hivis);
+  background: var(--color-hivis);
+  box-shadow: 0 0 0 4px rgb(212 255 63 / 0.18);
+}
+.sentinel-map-marker.active::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
+  border: 1px solid var(--color-hivis-edge);
+  animation: pulse-ring 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -368,7 +448,8 @@ mark.span-hl {
   .pulse-ring::after,
   .drift,
   .rail-bar,
-  .blink {
+  .blink,
+  .sentinel-map-marker.active::after {
     animation: none !important;
   }
 }

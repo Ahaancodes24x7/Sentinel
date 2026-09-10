@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Filter, Search } from 'lucide-react';
+import { Filter, MapPinned, Search } from 'lucide-react';
 import { Chip, Counter, PanelHead, PulseDot, ScanPanel, type Tone } from '../components/kinetic';
 import { EmptyPanel, NoDataYet, PanelLoading, QueryError } from '../components/common/QueryState';
 import { useOntology, useReports } from '../api/hooks';
 import { BUCKET_META, type Bucket } from '../api/types';
 import { cn } from '../lib/cn';
+import { ALL_SITES, useSelectedSite } from '../lib/siteContext';
 
 const BUCKET_TONE: Record<Bucket, Tone> = {
   HIGH_CONF_SIF: 'critical',
@@ -18,15 +19,22 @@ const BUCKET_TONE: Record<Bucket, Tone> = {
 const PAGE_SIZE = 40;
 
 export function ReportsPage() {
-  const [site, setSite] = useState<string>('');
+  const { selectedSite } = useSelectedSite();
+  const siteScoped = selectedSite.site_id !== ALL_SITES.site_id;
   const [bucket, setBucket] = useState<string>('');
   const [lsr, setLsr] = useState<string>('');
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
 
+  // Switching sites invalidates the current page's offset into a different,
+  // usually smaller, filtered result set.
+  useEffect(() => {
+    setPage(0);
+  }, [selectedSite.site_id]);
+
   const { data: ontology } = useOntology();
   const { data, isLoading, error, isFetching } = useReports({
-    site: site || undefined,
+    site: siteScoped ? selectedSite.site_id : undefined,
     bucket: bucket || undefined,
     lsr_tag: lsr || undefined,
     limit: PAGE_SIZE,
@@ -48,7 +56,6 @@ export function ReportsPage() {
       )
     : items;
 
-  const sites = ontology?.sites?.map((s) => s.name) ?? [];
   const rules = Object.keys(ontology?.life_saving_rules ?? {});
 
   return (
@@ -57,7 +64,9 @@ export function ReportsPage() {
         <div>
           <div className="flex items-center gap-2">
             <PulseDot tone="info" size={6} />
-            <span className="font-mono text-2xs tracked text-ink-4">CORPUS BROWSER</span>
+            <span className="font-mono text-2xs tracked text-ink-4">
+              CORPUS BROWSER · {siteScoped ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
+            </span>
           </div>
           <h1 className="mt-1.5 font-display text-4xl text-ink">All Reports</h1>
         </div>
@@ -77,6 +86,15 @@ export function ReportsPage() {
             <span className="font-mono text-2xs tracked">FILTER</span>
           </div>
 
+          <Link
+            to="/operations-map"
+            className="flex items-center gap-1.5 rounded-md border border-line-bright px-2.5 py-1.5 font-mono text-2xs tracked text-ink-2 transition-colors hover:border-hivis-edge hover:text-hivis"
+            title="Site is set from the Operations Map / site selector — change it there."
+          >
+            <MapPinned className="h-3 w-3" strokeWidth={2.2} />
+            {siteScoped ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
+          </Link>
+
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-4" />
             <input
@@ -87,7 +105,6 @@ export function ReportsPage() {
             />
           </div>
 
-          <FilterSelect value={site} onChange={setSite} label="All sites" options={sites} />
           <FilterSelect
             value={bucket}
             onChange={setBucket}
@@ -97,11 +114,10 @@ export function ReportsPage() {
           />
           <FilterSelect value={lsr} onChange={setLsr} label="All rules" options={rules} />
 
-          {(site || bucket || lsr || search) && (
+          {(bucket || lsr || search) && (
             <button
               type="button"
               onClick={() => {
-                setSite('');
                 setBucket('');
                 setLsr('');
                 setSearch('');

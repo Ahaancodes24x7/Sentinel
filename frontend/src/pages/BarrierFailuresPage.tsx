@@ -4,9 +4,12 @@ import { Bar, Chip, PanelHead, PulseDot, ScanPanel } from '../components/kinetic
 import { EmptyPanel, PanelLoading, QueryError } from '../components/common/QueryState';
 import { useBarrierFailures, useOntology } from '../api/hooks';
 import { cn } from '../lib/cn';
+import { ALL_SITES, useSelectedSite } from '../lib/siteContext';
 
 export function BarrierFailuresPage() {
-  const { data, isLoading, error } = useBarrierFailures();
+  const { selectedSite } = useSelectedSite();
+  const siteParam = selectedSite.site_id !== ALL_SITES.site_id ? selectedSite.site_id : undefined;
+  const { data, isLoading, error } = useBarrierFailures(siteParam);
   const { data: ontology } = useOntology();
   const items = data?.items ?? [];
   const barrierTypes = Object.entries(ontology?.barrier_types ?? {});
@@ -17,7 +20,8 @@ export function BarrierFailuresPage() {
         <div className="flex items-center gap-2">
           <PulseDot tone="high" size={6} />
           <span className="font-mono text-2xs tracked text-ink-4">
-            BARRIER FAILURE AS THE CORE SIGNAL
+            BARRIER FAILURE AS THE CORE SIGNAL ·{' '}
+            {siteParam ? selectedSite.canonical_name.toUpperCase() : 'ALL SITES'}
           </span>
         </div>
         <h1 className="mt-1.5 font-display text-4xl text-ink">Barrier Failures</h1>

@@ -368,6 +368,18 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+def _resolve_site_values(site: str) -> list[str]:
+    """Expand a `site` query param into the report.site values it covers.
+
+    Lets a filter target a real OIL location (e.g. "duliajan") and reach the
+    synthetic demonstration units tagged under it, or a single unit name and
+    match only that one. See site_registry.get_report_site_values.
+    """
+    from sif_engine.site_intelligence.site_registry import get_report_site_values
+
+    return get_report_site_values(site)
+
+
 def _audit(db: Session, entity_type: str, entity_id: str, action: str, actor: str) -> None:
     """Append an immutable audit record.
 
@@ -657,7 +669,7 @@ def list_reports(
     query = db.query(ReportModel)
 
     if site:
-        query = query.filter(ReportModel.site == site)
+        query = query.filter(ReportModel.site.in_(_resolve_site_values(site)))
     if sif_potential is not None:
         query = query.filter(ReportModel.sif_potential == sif_potential)
     if bucket:
@@ -950,11 +962,12 @@ def get_clusters(
 
     clusters: list[ClusterItem] = []
     edges: list[ClusterEdge] = []
+    site_values = set(_resolve_site_values(site)) if site else None
 
     for row in stored:
         if row.member_count < min_cluster_size:
             continue
-        if site and site not in (row.sites or []):
+        if site_values and not site_values.intersection(row.sites or []):
             continue
         clusters.append(
             ClusterItem(
@@ -1050,7 +1063,7 @@ def get_trends(
     """
     query = db.query(ReportModel)
     if site:
-        query = query.filter(ReportModel.site == site)
+        query = query.filter(ReportModel.site.in_(_resolve_site_values(site)))
     if lsr_tag:
         query = query.filter(ReportModel.lsr_tag == lsr_tag)
     reports = query.order_by(ReportModel.timestamp.asc()).all()
@@ -1092,22 +1105,28 @@ def get_trends(
 
 @app.get("/api/v1/dashboard/summary", response_model=DashboardSummary, tags=["dashboard"])
 def get_dashboard_summary(
+    site: Optional[str] = None,
     user: tuple[str, Role] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    total = db.query(func.count(ReportModel.report_id)).scalar() or 0
+    site_values = _resolve_site_values(site) if site else None
+    base = db.query(ReportModel)
+    if site_values:
+        base = base.filter(ReportModel.site.in_(site_values))
+
+    total = base.with_entities(func.count(ReportModel.report_id)).scalar() or 0
     pending = (
-        db.query(func.count(ReportModel.report_id))
-        .filter(
+        base.filter(
             ReportModel.review_status == "pending",
             ReportModel.bucket.in_(["LOW_CONF_REVIEW", "NEEDS_MORE_INFO", "HIGH_CONF_SIF"]),
         )
+        .with_entities(func.count(ReportModel.report_id))
         .scalar()
         or 0
     )
     flagged = (
-        db.query(func.count(ReportModel.report_id))
-        .filter(ReportModel.sif_potential == True)  # noqa: E712
+        base.filter(ReportModel.sif_potential == True)  # noqa: E712
+        .with_entities(func.count(ReportModel.report_id))
         .scalar()
         or 0
     )
@@ -1115,25 +1134,28 @@ def get_dashboard_summary(
     # Real distribution across the 4 routing buckets, in one grouped query.
     bucket_counts = {
         str(bucket): int(count)
-        for bucket, count in db.query(ReportModel.bucket, func.count(ReportModel.report_id))
+        for bucket, count in base.with_entities(ReportModel.bucket, func.count(ReportModel.report_id))
         .group_by(ReportModel.bucket)
         .all()
     }
 
-    site_count = db.query(func.count(func.distinct(ReportModel.site))).scalar() or 0
+    site_count = (
+        base.with_entities(func.count(func.distinct(ReportModel.site))).scalar() or 0
+    )
 
     # Pattern counts come from the clustering job, not from counting distinct
     # LSR tags — the previous version reported "9 patterns" on any corpus that
     # merely used all nine Life-Saving Rules, which is not a pattern at all.
-    pattern_count = db.query(func.count(PrecursorClusterModel.cluster_id)).scalar() or 0
-    emerging = (
-        db.query(func.count(PrecursorClusterModel.cluster_id))
-        .filter(PrecursorClusterModel.pattern_type == "emerging")
-        .scalar()
-        or 0
-    )
+    # Site-scoped, filtering is done in Python: `sites` is a small JSON list
+    # per cluster row, not worth a second query-building path for.
+    cluster_rows = db.query(PrecursorClusterModel).all()
+    if site_values:
+        site_set = set(site_values)
+        cluster_rows = [r for r in cluster_rows if site_set.intersection(r.sites or [])]
+    pattern_count = len(cluster_rows)
+    emerging = sum(1 for r in cluster_rows if r.pattern_type == "emerging")
 
-    latest = db.query(ReportModel).order_by(ReportModel.timestamp.desc()).first()
+    latest = base.order_by(ReportModel.timestamp.desc()).first()
 
     return DashboardSummary(
         total_reports=int(total),
@@ -1166,7 +1188,7 @@ def get_review_queue(
         ReportModel.review_status == "pending",
     )
     if site:
-        query = query.filter(ReportModel.site == site)
+        query = query.filter(ReportModel.site.in_(_resolve_site_values(site)))
 
     # Priority ordering first, then the caller's sort. A high-confidence
     # precursor from last month outranks an incomplete report filed this
@@ -1518,7 +1540,7 @@ def get_associations(
     """
     query = db.query(ReportModel)
     if site:
-        query = query.filter(ReportModel.site == site)
+        query = query.filter(ReportModel.site.in_(_resolve_site_values(site)))
     frames = analytics.frames_from(query.all())
 
     rules = analytics.compute_associations(
@@ -1549,7 +1571,7 @@ def get_barrier_failures(
     """(activity, barrier failure mode) pairs ranked by SIF-flagged share."""
     query = db.query(ReportModel)
     if site:
-        query = query.filter(ReportModel.site == site)
+        query = query.filter(ReportModel.site.in_(_resolve_site_values(site)))
     frames = analytics.frames_from(query.all())
 
     items = analytics.compute_barrier_failures(frames, min_count=min_count)
