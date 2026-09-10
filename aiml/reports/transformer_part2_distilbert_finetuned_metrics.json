@@ -1,0 +1,32 @@
+{
+  "precision": 0.9625,
+  "recall": 0.962,
+  "f1": 0.9623,
+  "f2": 0.9621,
+  "roc_auc": 0.9703,
+  "pr_auc": 0.9601,
+  "brier": 0.0312,
+  "accuracy": 0.9674,
+  "flagged_fraction": 0.4318,
+  "confusion": {
+    "tn": 2759,
+    "fp": 81,
+    "fn": 82,
+    "tp": 2078
+  },
+  "train_seconds": 514.8,
+  "hardware": {
+    "device": "cuda",
+    "gpu_name": "NVIDIA GeForce RTX 2050",
+    "gpu_mem_gb": 4.3,
+    "torch_version": "2.6.0+cu124"
+  },
+  "model_name": "distilbert-base-uncased",
+  "epochs": 4,
+  "batch_size": 16,
+  "learning_rate": 2e-05,
+  "class_weights": [
+    0.8803850412368774,
+    1.1572288274765015
+  ]
+}
