@@ -550,3 +550,145 @@ class LoginResponse(BaseModel):
 class MeResponse(BaseModel):
     username: str
     role: Role
+
+
+# ---------------------------------------------------------------------------
+# Live Safety Vision
+# ---------------------------------------------------------------------------
+class VisionSeverity(str, Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class VisionEventStatus(str, Enum):
+    active = "active"
+    acknowledged = "acknowledged"
+
+
+class VisionSourceType(str, Enum):
+    webcam = "webcam"
+    demo_video = "demo_video"
+    rtsp = "rtsp"
+
+
+class VisionDetectedObject(BaseModel):
+    class_name: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    bbox: list[float]  # [x1, y1, x2, y2] normalized 0..1
+
+
+class VisionRoi(BaseModel):
+    name: str
+    roi_type: str
+    points: list[list[float]]
+    hazard_context: str
+    lsr_tag: str
+
+
+class VisionCamera(BaseModel):
+    camera_id: str
+    camera_name: str
+    site_id: str
+    rois: list[VisionRoi] = Field(default_factory=list)
+
+
+class VisionCamerasResponse(BaseModel):
+    cameras: list[VisionCamera]
+    demo_notice: str = (
+        "Demo camera identifiers for the SIH demonstration — not a claim of "
+        "installed OIL India CCTV infrastructure."
+    )
+
+
+class VisionStartRequest(BaseModel):
+    site_id: str
+    camera_id: str
+    source_type: VisionSourceType
+    rtsp_url: Optional[str] = None
+
+
+class VisionStartResponse(BaseModel):
+    camera_id: str
+    site_id: str
+    active: bool
+    source_type: VisionSourceType
+    model_config = {"protected_namespaces": ()}
+    model_name: str
+    device: str
+    model_ready: bool
+    model_error: Optional[str] = None
+    demo_notice: str
+
+
+class VisionStopRequest(BaseModel):
+    camera_id: str
+
+
+class VisionStopResponse(BaseModel):
+    camera_id: str
+    active: bool
+
+
+class VisionAnalyzeFrameRequest(BaseModel):
+    site_id: str
+    camera_id: str
+    image_base64: str = Field(min_length=10)
+
+
+class VisionSafetyEvent(BaseModel):
+    event_id: str
+    timestamp: datetime
+    site_id: str
+    camera_id: str
+    camera_name: str
+    event_type: str
+    severity: VisionSeverity
+    confidence: float = Field(ge=0.0, le=1.0)
+    objects: list[VisionDetectedObject] = Field(default_factory=list)
+    evidence: str
+    roi: Optional[str] = None
+    observed: str
+    inference: str
+    sif_relevance: str
+    lsr_tag: str
+    status: VisionEventStatus = VisionEventStatus.active
+    acknowledged_by: Optional[str] = None
+    acknowledged_at: Optional[datetime] = None
+
+
+class VisionAnalyzeFrameResponse(BaseModel):
+    camera_id: str
+    site_id: str
+    frame_ts: datetime
+    people_count: int
+    vehicle_count: int
+    detections: list[VisionDetectedObject] = Field(default_factory=list)
+    new_events: list[VisionSafetyEvent] = Field(default_factory=list)
+    model_config = {"protected_namespaces": ()}
+    model_name: str
+    device: str
+    skipped: bool = False
+
+
+class VisionStatusResponse(BaseModel):
+    camera_id: str
+    site_id: Optional[str] = None
+    active: bool
+    source_type: Optional[str] = None
+    people_count: int = 0
+    vehicle_count: int = 0
+    active_hazards: int = 0
+    high_priority_hazards: int = 0
+    model_config = {"protected_namespaces": ()}
+    model_name: str
+    device: str
+    model_ready: bool
+    model_error: Optional[str] = None
+    last_frame_at: Optional[datetime] = None
+    demo_notice: str
+
+
+class VisionEventsResponse(BaseModel):
+    events: list[VisionSafetyEvent]
+    total: int

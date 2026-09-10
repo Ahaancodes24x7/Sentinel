@@ -26,6 +26,11 @@ import type {
   ReportDetail,
   ReportListItem,
   TrendsResponse,
+  VisionCamerasResponse,
+  VisionEventsResponse,
+  VisionSafetyEvent,
+  VisionStartResponse,
+  VisionStatusResponse,
 } from './types';
 
 /* -------------------------------------------------------------------------
@@ -225,6 +230,61 @@ export function useSites() {
     queryKey: ['sites'],
     queryFn: () => api.get<{ sites: { site_id: string; canonical_name: string }[] }>('/sites'),
     staleTime: Infinity,
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * Live Safety Vision
+ * ---------------------------------------------------------------------- */
+
+export function useVisionCameras(siteId?: string) {
+  return useQuery({
+    queryKey: ['vision-cameras', siteId],
+    queryFn: () => api.get<VisionCamerasResponse>(`/vision/cameras${qs({ site_id: siteId })}`),
+    enabled: Boolean(siteId),
+    staleTime: 60000,
+  });
+}
+
+export function useVisionStatus(cameraId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['vision-status', cameraId],
+    queryFn: () => api.get<VisionStatusResponse>(`/vision/status${qs({ camera_id: cameraId })}`),
+    enabled: Boolean(cameraId) && enabled,
+    refetchInterval: 3000,
+  });
+}
+
+export function useVisionEvents(cameraId?: string, limit = 50, enabled = true) {
+  return useQuery({
+    queryKey: ['vision-events', cameraId, limit],
+    queryFn: () => api.get<VisionEventsResponse>(`/vision/events${qs({ camera_id: cameraId, limit })}`),
+    enabled: Boolean(cameraId) && enabled,
+    refetchInterval: 4000,
+  });
+}
+
+export function useVisionStart() {
+  return useMutation({
+    mutationFn: (payload: { site_id: string; camera_id: string; source_type: string; rtsp_url?: string }) =>
+      api.post<VisionStartResponse>('/vision/start', payload),
+  });
+}
+
+export function useVisionStop() {
+  return useMutation({
+    mutationFn: (payload: { camera_id: string }) => api.post('/vision/stop', payload),
+  });
+}
+
+export function useVisionAcknowledge() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (eventId: string) => api.post<VisionSafetyEvent>(`/vision/events/${eventId}/acknowledge`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['vision-events'] });
+      qc.invalidateQueries({ queryKey: ['vision-status'] });
+    },
   });
 }
 

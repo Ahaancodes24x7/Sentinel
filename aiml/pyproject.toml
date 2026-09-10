@@ -5,7 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sif-engine"
 version = "0.1.0"
-dependencies = ["pandas", "numpy", "scikit-learn", "PyYAML"]
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "PyYAML",
+    "ultralytics>=8.3",
+    "opencv-python>=4.9",
+    "torch>=2.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -192,6 +192,39 @@ class PrecursorClusterModel(Base):
     computed_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class VisionEventModel(Base):
+    """Durable log of Live Safety Vision hazard events.
+
+    Session-level live state (active flag, rolling people/vehicle counts,
+    per-rule dedupe cooldowns) stays in-memory in
+    sif_engine.vision.stream_processor - it is ephemeral by nature, like a
+    CCTV system's current tally. Once a hazard rule fires, the resulting
+    event is durable here, same as every other safety-relevant record in
+    Sentinel.
+    """
+
+    __tablename__ = "vision_events"
+
+    event_id = Column(String(64), primary_key=True, index=True)
+    site_id = Column(String(64), nullable=False, index=True)
+    camera_id = Column(String(64), nullable=False, index=True)
+    camera_name = Column(String(256), nullable=True)
+    event_type = Column(String(64), nullable=False, index=True)
+    severity = Column(String(16), nullable=False, index=True)
+    confidence = Column(Float, nullable=False, default=0.0)
+    objects = Column(JSON, nullable=False)
+    evidence = Column(Text, nullable=False)
+    roi = Column(String(128), nullable=True)
+    observed = Column(Text, nullable=False)
+    inference = Column(Text, nullable=False)
+    sif_relevance = Column(Text, nullable=False)
+    lsr_tag = Column(String(128), nullable=False)
+    status = Column(String(32), nullable=False, default="active", index=True)
+    acknowledged_by = Column(String(128), nullable=True)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    timestamp = Column(DateTime(timezone=True), nullable=False, default=_now, index=True)
+
+
 class AuditLogModel(Base):
     __tablename__ = "audit_logs"
 
