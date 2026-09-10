@@ -1,11 +1,12 @@
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, LogOut, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { AlertTriangle, LogOut, MapPin, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../../lib/cn';
 import { Chip, LiveClock, PulseDot } from '../kinetic';
 import { Hint, HINTS } from '../common/Hint';
 import { useHealth, useRecomputePatterns, useTrends } from '../../api/hooks';
 import { clearSession } from '../../api/client';
+import { useSelectedSite } from '../../lib/siteContext';
 
 /**
  * The synthetic-data banner is permanent and non-dismissible by design.
@@ -75,6 +76,40 @@ function AlertTicker() {
   );
 }
 
+/**
+ * Site selector.
+ *
+ * The demo now spans three real OIL India locations. Switching here drives
+ * Live Safety Vision's camera list directly; other screens keep their own
+ * independent site filters (which cover the full registry, not just these
+ * three) so this selector never silently narrows data someone didn't ask to
+ * filter.
+ */
+function SiteSelector() {
+  const { selectedSite, setSelectedSiteId, sites } = useSelectedSite();
+  return (
+    <Hint
+      content="Active OIL India site for this demo. Drives the camera list on Live Safety Vision."
+      side="bottom"
+    >
+      <div className="flex items-center gap-1.5 rounded-sm border border-line-bright px-2 py-1 text-ink-2">
+        <MapPin className="h-3 w-3 text-hivis" strokeWidth={2.2} />
+        <select
+          value={selectedSite.site_id}
+          onChange={(e) => setSelectedSiteId(e.target.value)}
+          className="cursor-pointer bg-transparent font-mono text-2xs tracked text-ink outline-none"
+        >
+          {sites.map((s) => (
+            <option key={s.site_id} value={s.site_id} className="bg-surface text-ink">
+              {s.canonical_name.toUpperCase()}
+            </option>
+          ))}
+        </select>
+      </div>
+    </Hint>
+  );
+}
+
 export function Topbar() {
   const navigate = useNavigate();
   const { data: health, isError } = useHealth();
@@ -127,6 +162,8 @@ export function Topbar() {
             <Chip tone="neutral">{health.model_version}</Chip>
           </Hint>
         )}
+
+        <SiteSelector />
 
         <div className="mx-2 h-4 w-px bg-line" />
 

@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 data/raw/*
 models/*.pt
+models/**/*.pt
 logs/*
 !**/.gitkeep
 
@@ -17,3 +18,9 @@ models/ner/
 
 # The scikit-learn artefacts (all under 4 MB) and the 25k synthetic corpus ARE
 # committed, so a fresh clone can run the console without retraining anything.
+
+# yolov8n.pt (Live Safety Vision, ~6 MB) is covered by `models/*.pt` above and
+# NOT committed. Ultralytics downloads and caches it into models/vision/ on
+# first use — needs one internet connection, then works offline. Without it
+# the vision detector reports model_ready=false with a readable error instead
+# of crashing the backend; the report-analysis pipeline is unaffected either way.

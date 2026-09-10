@@ -3,6 +3,11 @@ numpy
 scikit-learn
 PyYAML
 pytest
+# Live Safety Vision (aiml/src/sif_engine/vision) — CPU works fine; torch
+# auto-detects CUDA and falls back to CPU when unavailable.
+ultralytics>=8.3
+opencv-python>=4.9
+torch>=2.2
 # transformers
 # sentence-transformers
 # hdbscan

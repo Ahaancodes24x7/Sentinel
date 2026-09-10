@@ -281,6 +281,114 @@ export const BUCKET_META: Record<Bucket, { label: string; short: string; tone: s
   HIGH_CONF_NON_SIF: { label: 'Cleared', short: 'CLEARED', tone: 'low' },
 };
 
+/* -------------------------------------------------------------------------
+ * Live Safety Vision
+ * ---------------------------------------------------------------------- */
+
+export type VisionSeverity = 'high' | 'medium' | 'low';
+export type VisionEventStatus = 'active' | 'acknowledged';
+export type VisionSourceType = 'webcam' | 'demo_video' | 'rtsp';
+
+export interface VisionDetectedObject {
+  class_name: string;
+  confidence: number;
+  bbox: [number, number, number, number];
+}
+
+export interface VisionRoi {
+  name: string;
+  roi_type: string;
+  points: number[][];
+  hazard_context: string;
+  lsr_tag: string;
+}
+
+export interface VisionCamera {
+  camera_id: string;
+  camera_name: string;
+  site_id: string;
+  rois: VisionRoi[];
+}
+
+export interface VisionCamerasResponse {
+  cameras: VisionCamera[];
+  demo_notice: string;
+}
+
+export interface VisionSafetyEvent {
+  event_id: string;
+  timestamp: string;
+  site_id: string;
+  camera_id: string;
+  camera_name: string;
+  event_type: string;
+  severity: VisionSeverity;
+  confidence: number;
+  objects: VisionDetectedObject[];
+  evidence: string;
+  roi?: string | null;
+  observed: string;
+  inference: string;
+  sif_relevance: string;
+  lsr_tag: string;
+  status: VisionEventStatus;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+}
+
+export interface VisionEventsResponse {
+  events: VisionSafetyEvent[];
+  total: number;
+}
+
+export interface VisionStatusResponse {
+  camera_id: string;
+  site_id?: string | null;
+  active: boolean;
+  source_type?: string | null;
+  people_count: number;
+  vehicle_count: number;
+  active_hazards: number;
+  high_priority_hazards: number;
+  model_name: string;
+  device: string;
+  model_ready: boolean;
+  model_error?: string | null;
+  last_frame_at?: string | null;
+  demo_notice: string;
+}
+
+export interface VisionAnalyzeFrameResponse {
+  camera_id: string;
+  site_id: string;
+  frame_ts: string;
+  people_count: number;
+  vehicle_count: number;
+  detections: VisionDetectedObject[];
+  new_events: VisionSafetyEvent[];
+  model_name: string;
+  device: string;
+  skipped?: boolean;
+}
+
+export interface VisionStartResponse {
+  camera_id: string;
+  site_id: string;
+  active: boolean;
+  source_type: VisionSourceType;
+  model_name: string;
+  device: string;
+  model_ready: boolean;
+  model_error?: string | null;
+  demo_notice: string;
+}
+
+export const VISION_SEVERITY_TONE: Record<VisionSeverity, 'critical' | 'high' | 'medium'> = {
+  high: 'critical',
+  medium: 'high',
+  low: 'medium',
+};
+
 export const BARRIER_META: Record<BarrierStatus, { label: string; tone: string; gap: string }> = {
   explicitly_absent: { label: 'Absent', tone: 'critical', gap: '1.0' },
   uncertain: { label: 'Unverified', tone: 'high', gap: '0.6' },

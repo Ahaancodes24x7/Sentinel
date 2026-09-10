@@ -25,12 +25,15 @@ exactly the reports the problem statement asks us to surface.
 | Stage 3 calibrated confidence + 4-bucket routing | Built |
 | Stage 4 pattern discovery (HDBSCAN, association mining, CUSUM/EWMA) | Built |
 | Intervention engine (curated control library, hierarchy of controls) | Built |
-| FastAPI backend + PostgreSQL, 30 endpoints | Built |
-| React console, 14 screens, all on live API data | Built |
+| FastAPI backend + PostgreSQL, 30+ endpoints | Built |
+| React console, 15 screens, all on live API data | Built |
+| Live Safety Vision — real-time YOLO object detection + ROI hazard rules, 3-site demo | Built (see below) |
 
-**Not built, deliberately:** OIL system integration, real-time streaming ingestion,
-production user management, human/organisational-factor causal inference. Each is
-called out in the honesty section below rather than faked.
+**Not built, deliberately:** OIL system integration, an authorized live OIL camera
+feed, production user management, human/organisational-factor causal inference,
+PPE detection (the pretrained detector this prototype ships does not recognize
+PPE, so it does not claim to). Each is called out in the honesty section below
+rather than faked.
 
 ---
 
@@ -129,6 +132,96 @@ uses relative URLs, the shared link works with no rebuild and no CORS setup.
 
 ---
 
+## Live Safety Vision
+
+Real-time computer-vision safety monitoring, added alongside the report-analysis
+pipeline above — same backend, same database, same console. It answers a
+different question than the NLP side: not "what does this written report imply",
+but "what does the camera literally see, right now, and does that match a
+configured hazard scenario".
+
+**What it does.** A person selects a site (Duliajan, Digboi or Moran — see below)
+and a demo camera, then a video source: a browser webcam, or an uploaded/local MP4.
+Frames are analyzed continuously by [Ultralytics YOLO](https://docs.ultralytics.com/)
+(`yolov8n`, CPU by default, CUDA automatically if available) run through OpenCV.
+Detected people and vehicles are checked against per-camera configurable safety
+zones (Restricted Zone, Lifting Exclusion Zone, Vehicle Lane) and a proximity rule,
+producing structured safety events — never a bare "hazard detected".
+
+**Observation vs. inference, kept separate on purpose.** Every event states what was
+literally seen ("Person detected inside configured 'Restricted Zone' ...") and,
+separately, the safety interpretation a human still has to confirm ("Potential
+exposure to a hazardous area...", tagged `Requires HSE review`). A camera cannot
+verify isolation status, permits, or intent — it can only report an object in a
+zone, and Sentinel does not pretend otherwise.
+
+**PPE detection is not implemented.** The pretrained COCO-class YOLO model used
+here cannot recognize helmets or vests, and hallucinating that capability would
+undermine the honesty the rest of this project is built on. The hazard-rule layer
+(`aiml/src/sif_engine/vision/hazard_rules.py`) is structured so a dedicated PPE
+model could be plugged in later without restructuring it.
+
+**This is decision support, not autonomous safety control.** Nothing here stops
+equipment, sounds a physical alarm, or acts without a human — it surfaces events
+for an HSE reviewer to act on.
+
+### Three real OIL India sites
+
+The demo now spans three real OIL India operational locations — Duliajan, Digboi,
+and Moran, Assam — with two demo cameras each (`DUL-C01/C02`, `DIG-C01/C02`,
+`MOR-C01/C02`). **Only the site names and coordinates are real.** Camera IDs, ROI
+zones, and every event are synthetic/demo data, generated live by this
+prototype's own model — never a claim of installed OIL India CCTV infrastructure
+or an authorized live feed. The console's site selector (top bar) switches the
+active site; Live Safety Vision's camera list follows it directly.
+
+### Running it
+
+```bash
+pip install -r aiml/requirements.txt   # adds ultralytics, opencv-python, torch
+```
+
+The first run downloads the ~6 MB `yolov8n.pt` weights from Ultralytics'
+release assets (cached under `aiml/models/vision/` — not committed, same
+policy as the NER weights below) — needs a one-time internet connection.
+Then:
+
+```bash
+uvicorn backend.main:app --reload --port 8000
+cd frontend && npm run dev
+```
+
+Open the console → **Live Safety Vision** in the sidebar → pick **Webcam** (grants
+camera permission) or **Demo Video** (choose any local MP4 with people/vehicles in
+it) → **Start**. Bounding boxes, confidence, and the configured zones draw over
+the video; a person entering a zone produces a real event in the panel on the
+right within a couple of frames.
+
+If no GPU is available, inference runs on CPU automatically — the active
+device (`CPU`/`CUDA`) is shown directly on the video panel and in
+`GET /api/v1/vision/status`.
+
+### API
+
+```
+GET  /api/v1/vision/cameras         demo camera + ROI config, optionally by site
+POST /api/v1/vision/start           mark a camera session active
+POST /api/v1/vision/stop            end a camera session
+POST /api/v1/vision/analyze-frame   one frame in → detections + new events out
+GET  /api/v1/vision/status          live counts, active/high-priority hazards, device
+GET  /api/v1/vision/events          persisted safety events, filterable by site/camera/status
+POST /api/v1/vision/events/{id}/acknowledge
+```
+
+`analyze-frame` is the core loop: the frontend calls it on a throttled timer
+(webcam capture or a playing demo-video element feed the same path), and the
+backend also enforces its own minimum interval per camera so a bursty caller
+cannot overload the model. Events are persisted to PostgreSQL
+(`vision_events` table) the same way everything else in Sentinel is — there is
+no separate app or database for this feature.
+
+---
+
 ## Architecture
 
 ```
@@ -218,17 +311,21 @@ aiml/
     patterns/                   Stage 4 — clustering, association mining, SPC
     recommendation/             curated intervention library + evidence trail
     site_intelligence/          site registry and analytics
+    vision/                     Live Safety Vision — YOLO detector, ROI hazard rules,
+                                 frame-processing session manager, event schema
   scripts/                      generate / train / probe / evaluate entry points
   reports/                      evaluation report, metrics.json, OOD probe
+  models/vision/                yolov8n.pt cache (gitignored, auto-downloaded)
 backend/
-  main.py                       FastAPI app, 30 endpoints
-  database.py                   SQLAlchemy models (PostgreSQL)
+  main.py                       FastAPI app, 30+ endpoints incl. /api/v1/vision/*
+  database.py                   SQLAlchemy models (PostgreSQL), incl. VisionEventModel
   analytics.py                  DB rows → event frames → patterns and metrics
   seed_database.py              corpus → pipeline → DB → clustering
 frontend/
   src/api/                      typed client + React Query hooks (no mock fallback)
   src/components/kinetic/       motion primitives
-  src/pages/                    14 screens
+  src/lib/siteContext.tsx       global 3-site selector (Duliajan/Digboi/Moran)
+  src/pages/                    15 screens, incl. LiveVisionPage.tsx
 ```
 
 ## Testing
@@ -237,3 +334,9 @@ frontend/
 TEST_ISOLATED_SQLITE=1 DATABASE_URL="sqlite:///:memory:" python -m pytest backend/tests -q
 cd aiml && python -m pytest tests -q
 ```
+
+`backend/tests/test_vision_api.py` and `aiml/tests/test_vision.py` cover Live
+Safety Vision specifically (detector init, ROI/proximity rules, event schema,
+the three-site camera registry, and the API/DB round trip). The model-inference
+boundary (`YoloDetector.detect`) is mocked in the deterministic hazard-rule API
+test — nothing else about the feature is mocked away.

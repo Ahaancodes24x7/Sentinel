@@ -19,6 +19,8 @@ import { ModelPerformancePage } from './pages/ModelPerformancePage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { ReviewQueuePage } from './pages/ReviewQueuePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { LiveVisionPage } from './pages/LiveVisionPage';
+import { SiteProvider } from './lib/siteContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +49,7 @@ function RequireAuth({ children }: { children: ReactElement }) {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <SiteProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<LandingPage />} />
@@ -60,6 +63,7 @@ export function App() {
             }
           >
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/live-vision" element={<LiveVisionPage />} />
             <Route path="/submit" element={<SubmitReportPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/reports/:id" element={<ReportDetailPage />} />
@@ -79,6 +83,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </SiteProvider>
     </QueryClientProvider>
   );
 }

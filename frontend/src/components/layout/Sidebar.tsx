@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart3,
   Boxes,
+  Camera,
   ClipboardCheck,
   FileText,
   Gauge,
@@ -50,6 +51,12 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
         label: 'Action Center',
         icon: LayoutDashboard,
         hint: 'The landing view: what needs attention, where the risk is, and whether anything is trending worse.',
+      },
+      {
+        to: '/live-vision',
+        label: 'Live Safety Vision',
+        icon: Camera,
+        hint: 'Real-time YOLO object detection over a webcam or a demo video, with configurable safety-zone rules and live hazard events.',
       },
       {
         to: '/submit',

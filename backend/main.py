@@ -39,6 +39,7 @@ try:
         PrecursorClusterModel,
         ReportModel,
         ReviewActionModel,
+        VisionEventModel,
         check_db_health,
         get_db,
         init_db,
@@ -104,6 +105,18 @@ try:
         TrendAlert,
         TrendPoint,
         TrendsResponse,
+        VisionAnalyzeFrameRequest,
+        VisionAnalyzeFrameResponse,
+        VisionCamera,
+        VisionCamerasResponse,
+        VisionDetectedObject,
+        VisionEventsResponse,
+        VisionSafetyEvent,
+        VisionStartRequest,
+        VisionStartResponse,
+        VisionStatusResponse,
+        VisionStopRequest,
+        VisionStopResponse,
     )
 except ImportError:
     from database import (  # type: ignore
@@ -113,6 +126,7 @@ except ImportError:
         PrecursorClusterModel,
         ReportModel,
         ReviewActionModel,
+        VisionEventModel,
         check_db_health,
         get_db,
         init_db,
@@ -178,12 +192,26 @@ except ImportError:
         TrendAlert,
         TrendPoint,
         TrendsResponse,
+        VisionAnalyzeFrameRequest,
+        VisionAnalyzeFrameResponse,
+        VisionCamera,
+        VisionCamerasResponse,
+        VisionDetectedObject,
+        VisionEventsResponse,
+        VisionSafetyEvent,
+        VisionStartRequest,
+        VisionStartResponse,
+        VisionStatusResponse,
+        VisionStopRequest,
+        VisionStopResponse,
     )
 
 
 from contextlib import asynccontextmanager
 
 from sif_engine.pipeline import get_model_status, run_batch, run_single
+from sif_engine.vision import camera_registry as vision_cameras
+from sif_engine.vision.stream_processor import get_manager as get_vision_manager
 
 
 @asynccontextmanager
@@ -209,6 +237,48 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _persist_vision_events(events: list[dict]) -> None:
+    """Event sink for the vision engine: durable storage lives in Postgres.
+
+    Registered once at import time so events are persisted the same way
+    whether they came from a browser-driven analyze-frame call or the
+    optional background RTSP worker — the aiml vision package itself has no
+    database dependency (see stream_processor.py docstring).
+    """
+    db = SessionLocal()
+    try:
+        for e in events:
+            db.merge(VisionEventModel(
+                event_id=e["event_id"],
+                site_id=e["site_id"],
+                camera_id=e["camera_id"],
+                camera_name=e.get("camera_name"),
+                event_type=e["event_type"],
+                severity=e["severity"],
+                confidence=e["confidence"],
+                objects=e["objects"],
+                evidence=e["evidence"],
+                roi=e.get("roi"),
+                observed=e["observed"],
+                inference=e["inference"],
+                sif_relevance=e["sif_relevance"],
+                lsr_tag=e["lsr_tag"],
+                status=e["status"],
+                acknowledged_by=e.get("acknowledged_by"),
+                acknowledged_at=e.get("acknowledged_at"),
+                timestamp=e["timestamp"],
+            ))
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        print(f"Vision event persistence failed: {exc}")
+    finally:
+        db.close()
+
+
+get_vision_manager().set_event_sink(_persist_vision_events)
 
 
 @app.exception_handler(HTTPException)
@@ -1604,6 +1674,253 @@ def login(payload: LoginRequest):
 def me(user: tuple[str, Role] = Depends(get_current_user)):
     username, role = user
     return MeResponse(username=username, role=role)
+
+
+# ---------------------------------------------------------------------------
+# 8. Live Safety Vision
+#
+# Real-time computer-vision safety monitoring, layered on top of the same
+# FastAPI app and PostgreSQL database as the report-analysis pipeline — not a
+# second backend. Detection + rule evaluation live in sif_engine.vision
+# (aiml package); this section only exposes them at the API boundary and
+# persists the resulting events.
+#
+# Camera footage (webcam or an uploaded/local video) is demo/synthetic
+# footage for the SIH demonstration. It is never a live OIL India feed, and
+# `demo_notice` says so on every response that carries live vision state.
+# ---------------------------------------------------------------------------
+VISION_DEMO_NOTICE = (
+    "Demo Camera Feed — a browser webcam or an uploaded/local demo video, "
+    "processed live by YOLO. This is not a live OIL India camera feed."
+)
+
+
+def _vision_event_from_dict(e: dict) -> VisionSafetyEvent:
+    return VisionSafetyEvent(
+        event_id=e["event_id"],
+        timestamp=e["timestamp"],
+        site_id=e["site_id"],
+        camera_id=e["camera_id"],
+        camera_name=e.get("camera_name") or e["camera_id"],
+        event_type=e["event_type"],
+        severity=e["severity"],
+        confidence=e["confidence"],
+        objects=[VisionDetectedObject(**o) for o in e.get("objects", [])],
+        evidence=e["evidence"],
+        roi=e.get("roi"),
+        observed=e["observed"],
+        inference=e["inference"],
+        sif_relevance=e["sif_relevance"],
+        lsr_tag=e["lsr_tag"],
+        status=e.get("status", "active"),
+        acknowledged_by=e.get("acknowledged_by"),
+        acknowledged_at=e.get("acknowledged_at"),
+    )
+
+
+def _vision_event_from_row(r: "VisionEventModel") -> VisionSafetyEvent:
+    return VisionSafetyEvent(
+        event_id=r.event_id,
+        timestamp=r.timestamp,
+        site_id=r.site_id,
+        camera_id=r.camera_id,
+        camera_name=r.camera_name or r.camera_id,
+        event_type=r.event_type,
+        severity=r.severity,
+        confidence=r.confidence,
+        objects=[VisionDetectedObject(**o) for o in (r.objects or [])],
+        evidence=r.evidence,
+        roi=r.roi,
+        observed=r.observed,
+        inference=r.inference,
+        sif_relevance=r.sif_relevance,
+        lsr_tag=r.lsr_tag,
+        status=r.status,
+        acknowledged_by=r.acknowledged_by,
+        acknowledged_at=r.acknowledged_at,
+    )
+
+
+@app.get("/api/v1/vision/cameras", response_model=VisionCamerasResponse, tags=["vision"])
+def list_vision_cameras(
+    site_id: Optional[str] = None,
+    user: tuple[str, Role] = Depends(get_current_user),
+):
+    """Demo camera + configured ROI list, per site or across all three."""
+    cams = vision_cameras.get_cameras_for_site(site_id) if site_id else vision_cameras.get_all_cameras()
+    return VisionCamerasResponse(cameras=[VisionCamera(**c) for c in cams])
+
+
+@app.post("/api/v1/vision/start", response_model=VisionStartResponse, tags=["vision"])
+def start_vision_session(
+    payload: VisionStartRequest,
+    user: tuple[str, Role] = Depends(get_current_user),
+):
+    """Mark a camera session active. Webcam/demo-video frames still arrive via
+    analyze-frame on the frontend's own timer; this only resets per-camera
+    counters and (for source_type='rtsp') starts the optional background
+    capture thread."""
+    manager = get_vision_manager()
+    try:
+        manager.start(payload.camera_id, payload.site_id, payload.source_type.value, payload.rtsp_url)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "VALIDATION_ERROR", "message": str(exc), "status": 422},
+        )
+    info = manager.status(payload.camera_id)
+    return VisionStartResponse(
+        camera_id=payload.camera_id,
+        site_id=payload.site_id,
+        active=True,
+        source_type=payload.source_type,
+        model_name=info["model_name"],
+        device=info["device"],
+        model_ready=info["model_ready"],
+        model_error=info["model_error"],
+        demo_notice=VISION_DEMO_NOTICE,
+    )
+
+
+@app.post("/api/v1/vision/stop", response_model=VisionStopResponse, tags=["vision"])
+def stop_vision_session(
+    payload: VisionStopRequest,
+    user: tuple[str, Role] = Depends(get_current_user),
+):
+    manager = get_vision_manager()
+    manager.stop(payload.camera_id)
+    return VisionStopResponse(camera_id=payload.camera_id, active=False)
+
+
+@app.post("/api/v1/vision/analyze-frame", response_model=VisionAnalyzeFrameResponse, tags=["vision"])
+def analyze_vision_frame(
+    payload: VisionAnalyzeFrameRequest,
+    user: tuple[str, Role] = Depends(get_current_user),
+):
+    """Core continuous-analysis entry point: one video frame in, structured
+    detections + any newly fired safety events out. Called repeatedly by the
+    frontend (webcam capture loop or a playing demo-video element) at a
+    controlled interval; the manager also enforces its own minimum interval
+    per camera so a bursty caller cannot overload the model."""
+    manager = get_vision_manager()
+    try:
+        frame = manager.decode_base64_frame(payload.image_base64)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_FRAME", "message": str(exc), "status": 422},
+        )
+
+    result = manager.process_frame(payload.camera_id, payload.site_id, frame)
+    if result.get("skipped"):
+        info = manager.status(payload.camera_id)
+        return VisionAnalyzeFrameResponse(
+            camera_id=payload.camera_id,
+            site_id=payload.site_id,
+            frame_ts=_now(),
+            people_count=info.get("people_count", 0),
+            vehicle_count=info.get("vehicle_count", 0),
+            detections=[],
+            new_events=[],
+            model_name=info["model_name"],
+            device=info["device"],
+            skipped=True,
+        )
+
+    return VisionAnalyzeFrameResponse(
+        camera_id=result["camera_id"],
+        site_id=result["site_id"],
+        frame_ts=result["frame_ts"],
+        people_count=result["people_count"],
+        vehicle_count=result["vehicle_count"],
+        detections=[VisionDetectedObject(**d) for d in result["detections"]],
+        new_events=[_vision_event_from_dict(e) for e in result["new_events"]],
+        model_name=result["model_name"],
+        device=result["device"],
+    )
+
+
+@app.get("/api/v1/vision/status", response_model=VisionStatusResponse, tags=["vision"])
+def get_vision_status(
+    camera_id: str,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    manager = get_vision_manager()
+    info = manager.status(camera_id)
+    active_hazards = (
+        db.query(func.count(VisionEventModel.event_id))
+        .filter(VisionEventModel.camera_id == camera_id, VisionEventModel.status == "active")
+        .scalar()
+        or 0
+    )
+    high_priority = (
+        db.query(func.count(VisionEventModel.event_id))
+        .filter(
+            VisionEventModel.camera_id == camera_id,
+            VisionEventModel.status == "active",
+            VisionEventModel.severity == "high",
+        )
+        .scalar()
+        or 0
+    )
+    return VisionStatusResponse(
+        camera_id=camera_id,
+        site_id=info.get("site_id"),
+        active=info.get("active", False),
+        source_type=info.get("source_type"),
+        people_count=info.get("people_count", 0),
+        vehicle_count=info.get("vehicle_count", 0),
+        active_hazards=int(active_hazards),
+        high_priority_hazards=int(high_priority),
+        model_name=info["model_name"],
+        device=info["device"],
+        model_ready=info["model_ready"],
+        model_error=info["model_error"],
+        last_frame_at=info.get("last_frame_at"),
+        demo_notice=VISION_DEMO_NOTICE,
+    )
+
+
+@app.get("/api/v1/vision/events", response_model=VisionEventsResponse, tags=["vision"])
+def list_vision_events(
+    site_id: Optional[str] = None,
+    camera_id: Optional[str] = None,
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    limit: int = Query(default=50, le=200),
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(VisionEventModel)
+    if site_id:
+        query = query.filter(VisionEventModel.site_id == site_id)
+    if camera_id:
+        query = query.filter(VisionEventModel.camera_id == camera_id)
+    if status_filter:
+        query = query.filter(VisionEventModel.status == status_filter)
+    total = query.count()
+    rows = query.order_by(VisionEventModel.timestamp.desc()).limit(limit).all()
+    return VisionEventsResponse(events=[_vision_event_from_row(r) for r in rows], total=total)
+
+
+@app.post("/api/v1/vision/events/{event_id}/acknowledge", response_model=VisionSafetyEvent, tags=["vision"])
+def acknowledge_vision_event(
+    event_id: str,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = db.query(VisionEventModel).filter(VisionEventModel.event_id == event_id).first()
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "EVENT_NOT_FOUND", "message": f"No vision event {event_id}", "status": 404},
+        )
+    username, _role = user
+    row.status = "acknowledged"
+    row.acknowledged_by = username
+    row.acknowledged_at = _now()
+    db.commit()
+    return _vision_event_from_row(row)
 
 
 # ---------------------------------------------------------------------------
