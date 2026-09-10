@@ -127,6 +127,19 @@ class VisionSessionManager:
             session.rtsp_worker = None
         return session
 
+    def mark_worker_dead(self, camera_id: str, worker: "_BackgroundCaptureWorker") -> None:
+        """Called by a background worker thread when its capture loop ends on
+        its own (source never opened, or a read failed) rather than via an
+        explicit stop() - so `status()` stops reporting a session as active
+        once nothing is actually processing frames for it. Guarded by
+        identity so a worker that already lost a start/stop race can't clear
+        a newer session's state."""
+        with self._lock:
+            session = self._sessions.get(camera_id)
+            if session is not None and session.rtsp_worker is worker:
+                session.active = False
+                session.rtsp_worker = None
+
     def status(self, camera_id: str) -> dict:
         detector = self._get_detector()
         session = self._sessions.get(camera_id)
@@ -284,10 +297,12 @@ class _BackgroundCaptureWorker(threading.Thread):
         cap = cv2.VideoCapture(self._source)
         try:
             if not cap.isOpened():
+                self._mark_dead()
                 return
             while not self._stop_event.is_set():
                 ok, frame = cap.read()
                 if not ok or frame is None:
+                    self._mark_dead()
                     break
                 self._manager.process_frame(
                     self._camera_id, self._site_id, frame, enforce_min_interval=False
@@ -295,6 +310,14 @@ class _BackgroundCaptureWorker(threading.Thread):
                 time.sleep(self._interval)
         finally:
             cap.release()
+
+    def _mark_dead(self) -> None:
+        """The capture loop is ending on its own (source never opened, or
+        read failed) rather than via an explicit `.stop()` - without this the
+        session would keep reporting `active: true` forever even though no
+        frames are being processed anymore, which would mislead the console.
+        """
+        self._manager.mark_worker_dead(self._camera_id, self)
 
 
 _manager: Optional[VisionSessionManager] = None

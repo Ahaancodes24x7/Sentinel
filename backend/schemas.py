@@ -633,7 +633,11 @@ class VisionStopResponse(BaseModel):
 class VisionAnalyzeFrameRequest(BaseModel):
     site_id: str
     camera_id: str
-    image_base64: str = Field(min_length=10)
+    # ~8M base64 chars decodes to ~6MB — a 640px-wide JPEG frame at quality
+    # 0.6 is tens of KB, so this is generous headroom while still bounding
+    # memory/CPU spent decoding a single request on a publicly reachable
+    # endpoint (this is a live camera feed, not a file upload).
+    image_base64: str = Field(min_length=10, max_length=8_000_000)
 
 
 class VisionSafetyEvent(BaseModel):
