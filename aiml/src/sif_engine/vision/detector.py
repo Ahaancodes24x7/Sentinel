@@ -10,12 +10,15 @@ working even if this optional feature cannot start.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # The underlying model is a generic COCO-pretrained YOLO - it recognizes far
 # more classes than this. Only people and vehicles are relevant to the
@@ -127,13 +130,21 @@ class YoloDetector:
 
         # imgsz lets Ultralytics handle the resize internally rather than the
         # caller pre-resizing with OpenCV - one fewer array copy per frame.
-        results = self._model.predict(
-            frame_bgr,
-            conf=self.conf_threshold,
-            imgsz=_DEFAULT_IMGSZ,
-            device=self._device,
-            verbose=False,
-        )
+        try:
+            results = self._model.predict(
+                frame_bgr,
+                conf=self.conf_threshold,
+                imgsz=_DEFAULT_IMGSZ,
+                device=self._device,
+                verbose=False,
+            )
+        except Exception:
+            # A single malformed/corrupt frame must not crash a continuous
+            # video loop or 500 the analyze-frame endpoint - log it and treat
+            # this frame the same as "no detections", matching the "never
+            # raises" contract this method documents above.
+            logger.exception("YOLO inference failed on one frame; skipping it")
+            return []
 
         detections: list[DetectedObject] = []
         for result in results:
