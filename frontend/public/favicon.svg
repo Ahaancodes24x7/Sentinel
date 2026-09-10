@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Sentinel">
   <title>Sentinel</title>
-  <rect width="32" height="32" rx="7" fill="#0E1218"/>
-  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke="#28303D"/>
-  <path d="M16 4.6 L25.6 8.3 L25.6 16.2 C25.6 21.5 21.7 25.8 16 27.6 C10.3 25.8 6.4 21.5 6.4 16.2 L6.4 8.3 Z" fill="#2FB3A6"/>
-  <rect x="9.8" y="12.9" width="12.4" height="3.4" rx="1.2" fill="#0E1218"/>
+  <rect width="32" height="32" rx="7" fill="#0B0D10"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke="#232A33"/>
+  <path d="M23.07 8.93 A10 10 0 1 1 8.93 8.93" fill="none" stroke="#A8B2BF" stroke-width="2.2" stroke-linecap="round"/>
+  <circle cx="16" cy="6" r="2.4" fill="#D4FF3F"/>
 </svg>

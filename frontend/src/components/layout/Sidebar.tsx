@@ -1,7 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  Activity,
   BarChart3,
   Boxes,
   Camera,
@@ -18,6 +17,7 @@ import {
   ShieldAlert,
   Siren,
 } from 'lucide-react';
+import { SentinelLogo } from '../common/SentinelMark';
 import { cn } from '../../lib/cn';
 import { Counter, PulseDot } from '../kinetic';
 import { Hint } from '../common/Hint';
@@ -159,14 +159,8 @@ export function Sidebar() {
   return (
     <aside className="relative z-10 flex h-screen w-56 shrink-0 flex-col border-r border-line bg-surface/60 backdrop-blur-xl">
       {/* Brand */}
-      <div className="flex h-14 items-center gap-2.5 border-b border-line px-4">
-        <div className="flex h-7 w-7 items-center justify-center rounded-sm bg-hivis">
-          <Activity className="h-4 w-4 text-on-hivis" strokeWidth={2.75} />
-        </div>
-        <div className="min-w-0">
-          <div className="font-display text-lg leading-none text-ink">SENTINEL</div>
-          <div className="font-mono text-[9px] tracked text-ink-4">PS 26165 · OIL INDIA</div>
-        </div>
+      <div className="flex h-14 items-center border-b border-line px-4">
+        <SentinelLogo caption="PS 26165 · OIL INDIA" size={26} />
       </div>
 
       {/* Nav */}
