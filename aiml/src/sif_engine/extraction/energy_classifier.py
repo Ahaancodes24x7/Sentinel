@@ -174,6 +174,15 @@ def classify_energy(
                 "confidence": round(float(pred.get("confidence", 0.85)), 3),
                 "lsr_tag": predicted_lsr,
                 "model_version": pred.get("model_version", "baseline2-v0.3"),
+                # The model's own binary verdict on THIS report, carried through
+                # untouched so Stage 3 can check it against the SCL reasoner's
+                # verdict rather than the two being computed in isolation and
+                # never compared - see confidence/routing.py's model_signal.
+                "sif_signal": {
+                    "sif_potential": bool(pred.get("sif_potential", False)),
+                    "confidence": round(float(pred.get("confidence", 0.5)), 3),
+                    "model_version": pred.get("model_version", "baseline2-v0.3"),
+                },
             }
     except Exception:
         model_prediction = None
@@ -214,6 +223,10 @@ def classify_energy(
         "source": source,
         "lsr_tag": lsr_tag,
         "model_version": model_ver,
+        # None when no model ran at all (import failed, no active model) -
+        # distinct from a model that ran and predicted non-SIF, which Stage 3
+        # must be able to tell apart from "no signal available".
+        "sif_signal": model_prediction["sif_signal"] if model_prediction else None,
         # Authoritative gate contract fields
         "high_energy_decision": is_high_energy,
         "high_energy_source": gate_res["high_energy_source"],

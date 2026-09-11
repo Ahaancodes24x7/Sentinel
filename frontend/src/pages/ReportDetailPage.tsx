@@ -263,6 +263,28 @@ export function ReportDetailPage() {
             <Chip tone={bucketTone}>{BUCKET_META[cls.bucket]?.short ?? cls.bucket}</Chip>
             {cls.lsr_tag && cls.lsr_tag !== 'N/A' && <Chip tone="hivis">{cls.lsr_tag}</Chip>}
           </div>
+          {cls.model_agreement?.available && (
+            <div
+              className="mt-2 border-t border-line-faint pt-2 text-2xs leading-relaxed text-ink-3"
+              title="Whether the active learned classifier agrees with this deterministic SCL verdict — see Settings for which model is active."
+            >
+              {cls.model_agreement.escalated ? (
+                <span className="flex items-center gap-1.5 text-medium">
+                  <CircleAlert className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+                  Model disagreed ({Math.round((cls.model_agreement.model_confidence ?? 0) * 100)}% {cls.model_agreement.model_sif_potential ? 'SIF' : 'non-SIF'}) — routed to review
+                </span>
+              ) : cls.model_agreement.agrees ? (
+                <span className="flex items-center gap-1.5 text-low">
+                  <BadgeCheck className="h-3 w-3 shrink-0" strokeWidth={2.2} />
+                  Corroborated by {cls.model_agreement.model_version} ({Math.round((cls.model_agreement.model_confidence ?? 0) * 100)}%)
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  {cls.model_agreement.model_version} leans the other way ({Math.round((cls.model_agreement.model_confidence ?? 0) * 100)}%), below the threshold to escalate
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

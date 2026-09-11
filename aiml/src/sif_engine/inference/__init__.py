@@ -4,6 +4,7 @@ Inference interfaces for SIF Precursor Detection.
 
 from sif_engine.inference.baseline2 import Baseline2Model
 from sif_engine.inference.mlp import MLPModel
+from sif_engine.inference.transformer import TransformerModel
 from sif_engine.inference.model_registry import (
     DEFAULT_SIF_MODEL,
     ModelRegistry,
@@ -15,6 +16,7 @@ from sif_engine.inference.model_registry import (
 __all__ = [
     "Baseline2Model",
     "MLPModel",
+    "TransformerModel",
     "ModelRegistry",
     "DEFAULT_SIF_MODEL",
     "get_active_model",

@@ -66,6 +66,18 @@ export interface Classification {
   justification: string;
   model_version: string;
   reasoning_chain?: { step: number; label: string; detail: string }[];
+  /** Whether the active learned classifier (baseline2 / mlp / the fine-tuned
+   *  transformer) agrees with the deterministic SCL verdict on this report.
+   *  A confident disagreement demotes a HIGH_CONF_* bucket to LOW_CONF_REVIEW
+   *  rather than being silently discarded — see routing.route_prediction. */
+  model_agreement?: {
+    available: boolean;
+    agrees: boolean | null;
+    model_sif_potential: boolean | null;
+    model_confidence: number | null;
+    model_version: string | null;
+    escalated: boolean;
+  } | null;
   decision_factors?: Record<string, unknown>;
   /**
    * Present only on complaints the CCTV pipeline filed by itself. A reviewer
@@ -236,6 +248,12 @@ export interface RecommendedIntervention {
   control_level: string;
   priority: string;
   action: string;
+  /** Failure modes (ontology vocabulary) this control is curated to address. */
+  addresses: string[];
+  /** Of those, the ones THIS pattern's reports actually recorded. */
+  matched_failure_modes: string[];
+  /** How many of this pattern's reports mentioned a matched failure mode. */
+  evidence_match_count: number;
 }
 
 export interface RecommendationDetail {

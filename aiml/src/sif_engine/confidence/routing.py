@@ -135,15 +135,22 @@ def _insufficient_evidence(decision_factors: dict[str, Any], barrier_status: str
     return bool(barrier_unknown and (exposure_unknown or energy_unknown))
 
 
-def route_prediction(
+# A learned classifier's own confidence below this line is too close to a
+# coin flip to treat disagreement with the deterministic reasoner as a real
+# signal worth escalating over - it would just add review-queue noise for
+# every report the model was barely leaning on either way.
+MODEL_DISAGREEMENT_THRESHOLD = 0.70
+
+
+def _route_deterministic(
     sif_potential: bool,
     base_confidence: float,
     decision_factors: dict[str, Any],
     consistency_result: dict[str, Any],
     barrier_status: str,
-    candidate_needs_info: bool = False,
+    candidate_needs_info: bool,
 ) -> tuple[str, float]:
-    """Route a prediction into one of 4 buckets and return (bucket, confidence)."""
+    """The SCL-only routing decision — unchanged from before model_signal existed."""
     thresholds = _load_thresholds()
     high_th = thresholds.get("high_conf", 0.75)
     low_th = thresholds.get("low_conf", 0.25)
@@ -200,6 +207,78 @@ def route_prediction(
     if candidate_needs_info:
         return NEEDS_MORE_INFO, confidence
     return LOW_CONF_REVIEW, confidence
+
+
+def route_prediction(
+    sif_potential: bool,
+    base_confidence: float,
+    decision_factors: dict[str, Any],
+    consistency_result: dict[str, Any],
+    barrier_status: str,
+    candidate_needs_info: bool = False,
+    model_signal: Optional[dict[str, Any]] = None,
+) -> tuple[str, float, dict[str, Any]]:
+    """Route a prediction into one of 4 buckets.
+
+    Returns (bucket, confidence, model_agreement). The SCL chain above — energy,
+    barrier, exposure, consequence — stays the thing that decides and explains
+    the verdict; it does not become a rubber stamp for whichever classifier is
+    active. But it also should not silently overrule a confident, opposing read
+    from the active learned model (baseline2 / mlp / the fine-tuned transformer,
+    whichever ModelRegistry resolves — see inference/model_registry.py) without
+    that disagreement being visible anywhere. `model_signal`, when supplied, is
+    that model's own {sif_potential, confidence, model_version} for the same
+    report. Two outcomes, both explicit rather than either being hidden:
+
+    - Agreement is recorded as corroborating evidence (surfaced in the UI, not
+      folded into the confidence number — the two are different kinds of
+      evidence and averaging them would launder that difference away).
+    - A confident disagreement (model confidence >= MODEL_DISAGREEMENT_THRESHOLD)
+      demotes a would-be HIGH_CONF_* bucket to LOW_CONF_REVIEW: the same
+      "an active contradiction always goes to a human" principle already
+      applied to internal evidence contradictions above, extended to a
+      contradiction between the deterministic chain and the learned model.
+    """
+    bucket, confidence = _route_deterministic(
+        sif_potential=sif_potential,
+        base_confidence=base_confidence,
+        decision_factors=decision_factors,
+        consistency_result=consistency_result,
+        barrier_status=barrier_status,
+        candidate_needs_info=candidate_needs_info,
+    )
+
+    model_agreement: dict[str, Any] = {
+        "available": False,
+        "agrees": None,
+        "model_sif_potential": None,
+        "model_confidence": None,
+        "model_version": None,
+        "escalated": False,
+    }
+
+    if model_signal and model_signal.get("sif_potential") is not None:
+        model_sif = bool(model_signal["sif_potential"])
+        model_conf = float(model_signal.get("confidence", 0.0) or 0.0)
+        agrees = model_sif == sif_potential
+        model_agreement.update(
+            {
+                "available": True,
+                "agrees": agrees,
+                "model_sif_potential": model_sif,
+                "model_confidence": round(model_conf, 3),
+                "model_version": model_signal.get("model_version"),
+            }
+        )
+
+        confident_disagreement = (
+            not agrees and model_conf >= MODEL_DISAGREEMENT_THRESHOLD
+        )
+        if confident_disagreement and bucket in (HIGH_CONF_SIF, HIGH_CONF_NON_SIF):
+            bucket = LOW_CONF_REVIEW
+            model_agreement["escalated"] = True
+
+    return bucket, confidence, model_agreement
 
 
 def route(probability: float, prediction: int) -> str:

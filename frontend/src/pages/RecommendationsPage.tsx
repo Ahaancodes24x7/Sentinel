@@ -370,6 +370,23 @@ export function RecommendationsPage() {
                               {iv.priority}
                             </Chip>
                           </div>
+                          {iv.matched_failure_modes.length > 0 ? (
+                            <p className="mt-1.5 text-2xs leading-relaxed text-low">
+                              Directly addresses {iv.evidence_match_count} report
+                              {iv.evidence_match_count === 1 ? '' : 's'} in this pattern recording{' '}
+                              {iv.matched_failure_modes.map((m, mi) => (
+                                <span key={m}>
+                                  {mi > 0 && ', '}
+                                  <span className="text-ink-2">&ldquo;{m}&rdquo;</span>
+                                </span>
+                              ))}
+                            </p>
+                          ) : iv.addresses.length > 0 ? (
+                            <p className="mt-1.5 text-2xs leading-relaxed text-ink-4">
+                              Curated for this barrier — no report in this specific pattern named
+                              one of its usual failure modes ({iv.addresses.join(', ')})
+                            </p>
+                          ) : null}
                         </div>
                       </motion.div>
                     );

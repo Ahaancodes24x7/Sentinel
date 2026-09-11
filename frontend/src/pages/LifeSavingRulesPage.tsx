@@ -38,6 +38,35 @@ const RULE_ICONS: Record<string, LucideIcon> = {
   'arrow-up-from-line': ArrowUpFromLine,
 };
 
+/**
+ * Why each rule exists, in plain language — the ontology's one-line
+ * `description` (e.g. "Obtain authorisation before entering a confined
+ * space.") states WHAT the rule requires; this states WHY that requirement
+ * is the one that actually prevents a fatality, which is the part a reviewer
+ * unfamiliar with IOGP Report 459 has no way to infer from the label alone.
+ * Static reference content, not derived from any report in this corpus.
+ */
+const RULE_KNOWLEDGE: Record<string, string> = {
+  'Bypassing Safety Controls':
+    'Interlocks, alarms and trip systems exist so a single human mistake cannot, by itself, cause a major accident. Disabling or overriding one — even briefly, even with good intentions — removes exactly the barrier meant to catch that mistake, often without anyone else realising it happened.',
+  'Confined Space':
+    'A confined space can kill through an atmosphere that looks and smells completely normal — oxygen deficiency, a toxic gas, or a flammable build-up are all invisible without testing. Authorisation first means the atmosphere has actually been tested, ventilation or monitoring is running, and someone outside knows you are in there.',
+  Driving:
+    'Vehicles cause more injuries on an industrial site than almost any other single hazard, precisely because they are familiar and therefore under-respected. This rule is the basics everyone already knows — seatbelt, speed limit, fitness to drive, no phone — because incident data keeps showing people skip them under time pressure.',
+  'Energy Isolation':
+    'Verified isolation is the difference between "the power is probably off" and "it is off, tested, and cannot come back on while I am working." Trapped hydraulic pressure, a re-energised circuit, or a valve someone reopens mid-job are common, ordinary ways this rule gets violated — and each is directly fatal.',
+  'Hot Work':
+    'An open flame, a spark or a hot surface only becomes a fire or explosion in the presence of something that can burn. This rule is about verifying — not assuming — that the atmosphere is free of flammable vapour and ignition sources stay controlled for as long as the work continues, not just at the start.',
+  'Line of Fire':
+    'Stored energy that releases — a cable snapping under tension, a dropped tool, a pressurised line — travels in a straight line and does not care who is standing in it. This rule is about not being in that path, which is a physical position, not a hope.',
+  'Safe Mechanical Lifting':
+    'A suspended load carries more stored energy than almost anything else on an industrial site, and it fails without warning. Planning the lift, keeping the load path clear, and never standing under a suspended load is the entire content of this rule, because that is what actually prevents a crush fatality.',
+  'Work Authorisation':
+    'A permit is not paperwork — it is the record that someone with the authority and the full site picture, not just the crew doing the job, checked the scope against actual site conditions before work started. A verbal go-ahead skips that check.',
+  'Working at Height':
+    'A fall from height is fatal at heights most people do not intuitively expect, and an unclipped harness is invisible right up until it matters. This rule is about fall protection being in place and used correctly for the entire time someone is exposed, not just when a supervisor happens to be watching.',
+};
+
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 function polar(cx: number, cy: number, r: number, deg: number): [number, number] {
   return [cx + r * Math.cos(toRad(deg)), cy + r * Math.sin(toRad(deg))];
@@ -309,6 +338,13 @@ export function LifeSavingRulesPage() {
                   </Link>
                 }
               />
+
+              {RULE_KNOWLEDGE[active.name] && (
+                <div className="border-b border-line bg-surface-2/50 px-4 py-3">
+                  <div className="font-mono text-[9px] tracked text-ink-4">WHY THIS RULE EXISTS</div>
+                  <p className="mt-1 text-sm leading-relaxed text-ink-2">{RULE_KNOWLEDGE[active.name]}</p>
+                </div>
+              )}
 
               {/* The traceability chain, stated as a breadcrumb so the
                   connectivity is legible before you even read the columns. */}

@@ -15,3 +15,7 @@ scratch_*.db
 # directory on first run. Same policy as aiml/models/vision/ - a 6 MB
 # binary that every clone can fetch for itself.
 *.pt
+# PID/log files written by local dev-server run scripts.
+.run_pid.txt
+.run_stdout.log
+.run_stderr.log

@@ -86,7 +86,13 @@ def test_health_endpoint(client):
     # Pinning it means every legitimate model retrain breaks the API test suite,
     # which trains people to ignore red tests.
     assert isinstance(data["model_version"], str) and data["model_version"]
-    assert data["active_sif_model"] == "baseline2"
+    # Same reasoning as model_version: active_sif_model legitimately varies
+    # with whether the gitignored transformer checkpoint is present on this
+    # checkout (ModelRegistry prefers it when available) - assert the
+    # invariant, not a literal that would fail on whichever machine trained it.
+    assert data["active_sif_model"] in ("baseline2", "transformer")
+    if data.get("transformer_available"):
+        assert data["active_sif_model"] == "transformer"
     assert data["mlp_available"] is True
     assert "connected" in data["db"]
 

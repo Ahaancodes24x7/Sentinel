@@ -47,10 +47,18 @@ def test_run_batch_processing():
 
 
 def test_model_status():
-    """Verify get_model_status provides runtime metadata."""
+    """Verify get_model_status provides runtime metadata.
+
+    active_sif_model legitimately varies with whether the gitignored
+    transformer checkpoint happens to be present on this checkout (see
+    ModelRegistry.get_configured_model_name) - assert the invariant, not a
+    literal that would make this test fail on whichever machine trained it.
+    """
     status = get_model_status()
-    assert status["active_sif_model"] == "baseline2"
+    assert status["active_sif_model"] in ("baseline2", "transformer")
     assert status["mlp_available"] is True
+    if status.get("transformer_available"):
+        assert status["active_sif_model"] == "transformer"
 
 
 if __name__ == "__main__":

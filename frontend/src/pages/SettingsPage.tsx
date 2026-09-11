@@ -1,7 +1,6 @@
 import { Chip, PanelHead, PulseDot, ScanPanel } from '../components/kinetic';
 import { PanelLoading, QueryError } from '../components/common/QueryState';
 import { useHealth, useOntology } from '../api/hooks';
-import { API_BASE_URL } from '../api/client';
 
 export function SettingsPage() {
   const { data: health, isLoading, error } = useHealth();
@@ -22,16 +21,13 @@ export function SettingsPage() {
       <ScanPanel>
         <PanelHead title="RUNTIME" />
         {isLoading ? (
-          <PanelLoading rows={4} />
+          <PanelLoading rows={2} />
         ) : error ? (
           <QueryError error={error} />
         ) : (
           <div className="divide-y divide-line-faint">
-            <Row label="API endpoint" value={API_BASE_URL} mono />
             <Row label="Engine status" value={health?.status ?? 'unknown'} />
-            <Row label="Model version" value={health?.model_version ?? '—'} mono />
             <Row label="Database" value={health?.db ?? '—'} />
-            <Row label="Active SIF model" value={health?.active_sif_model ?? '—'} mono />
           </div>
         )}
       </ScanPanel>

@@ -180,7 +180,7 @@ def main() -> None:
     print("[B2] TF-IDF (word) + logistic regression")
     b2 = Pipeline([
         ("tfidf", TfidfVectorizer(ngram_range=(1, 2), min_df=2, sublinear_tf=True)),
-        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced")),
+        ("clf", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)),
     ])
     b2.fit(train_df.text_proc, y_train)
     b2_prob = b2.predict_proba(test_df.text_proc)[:, 1]
@@ -194,10 +194,19 @@ def main() -> None:
     # "injury" rank highly, the model has learned the outcome shortcut the whole
     # project exists to avoid.
     try:
-        vocab = np.array(b2.named_steps["tfidf"].get_feature_names_out())
+        vocab = b2.named_steps["tfidf"].get_feature_names_out()
         coefs = b2.named_steps["clf"].coef_[0]
-        top = vocab[np.argsort(-coefs)[:15]].tolist()
-        bottom = vocab[np.argsort(coefs)[:15]].tolist()
+        # Ties in coefficient (common near the tail of a large sparse vocab)
+        # broke differently run-to-run under plain np.argsort, which is not a
+        # stable sort - the reported metrics never moved, but this list is
+        # published as evidence in the interpretability check above it, so it
+        # should not visibly reshuffle between two runs over the same data.
+        # The token itself is the explicit tie-break, not run-to-run BLAS
+        # floating-point noise in near-equal coefficients.
+        order_desc = sorted(range(len(coefs)), key=lambda i: (-coefs[i], vocab[i]))
+        order_asc = sorted(range(len(coefs)), key=lambda i: (coefs[i], vocab[i]))
+        top = [vocab[i] for i in order_desc[:15]]
+        bottom = [vocab[i] for i in order_asc[:15]]
         results["baselines"]["B2_tfidf_logreg"]["top_positive_tokens"] = top
         results["baselines"]["B2_tfidf_logreg"]["top_negative_tokens"] = bottom
         leakage = [w for w in top if w in ("hospital", "injury", "injured", "fatality",
@@ -239,7 +248,7 @@ def main() -> None:
     print("[B4] TF-IDF word+char + CALIBRATED logistic regression  (production)")
     base = Pipeline([
         ("features", build_text_features()),
-        ("clf", LogisticRegression(max_iter=2000, C=4.0, class_weight="balanced")),
+        ("clf", LogisticRegression(max_iter=2000, C=4.0, class_weight="balanced", random_state=42)),
     ])
     sif_model = calibrate(base, train_df.text_proc, y_train, method="sigmoid", cv=3)
 
@@ -273,7 +282,7 @@ def main() -> None:
     lsr_test = test_df[test_df.lsr_tag.astype(str).str.strip().ne("") & test_df.lsr_tag.ne("N/A")]
     lsr_model = Pipeline([
         ("features", build_text_features()),
-        ("clf", LogisticRegression(max_iter=2000, C=4.0, class_weight="balanced")),
+        ("clf", LogisticRegression(max_iter=2000, C=4.0, class_weight="balanced", random_state=42)),
     ])
     lsr_model.fit(lsr_train.text_proc, lsr_train.lsr_tag)
     lsr_pred = lsr_model.predict(lsr_test.text_proc)
@@ -306,7 +315,7 @@ def main() -> None:
     print("[ENERGY] energy-type classifier")
     energy_model = Pipeline([
         ("features", build_text_features()),
-        ("clf", LogisticRegression(max_iter=2000, C=4.0, class_weight="balanced")),
+        ("clf", LogisticRegression(max_iter=2000, C=4.0, class_weight="balanced", random_state=42)),
     ])
     energy_model.fit(train_df.text_proc, train_df.energy_type)
     energy_pred = energy_model.predict(test_df.text_proc)

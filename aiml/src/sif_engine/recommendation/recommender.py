@@ -114,7 +114,14 @@ def recommend(
     activity_counts = Counter(str(f.get("activity")) for f in member_frames if f.get("activity"))
     primary_activity = activity_counts.most_common(1)[0][0] if activity_counts else None
 
-    interventions = get_interventions(barrier_type, primary_activity)
+    # Computed before get_interventions so each returned intervention can be
+    # matched against what this pattern's own reports actually recorded,
+    # rather than the library only ever describing the barrier type in the
+    # abstract - see intervention_library.get_interventions' docstring.
+    failure_modes = Counter(
+        str(f.get("barrier_failure_mode")) for f in member_frames if f.get("barrier_failure_mode")
+    )
+    interventions = get_interventions(barrier_type, primary_activity, observed_failure_modes=dict(failure_modes))
 
     sites = pattern.get("sites") or sorted({str(f.get("site")) for f in member_frames if f.get("site")})
     member_ids = pattern.get("member_report_ids") or [str(f.get("report_id")) for f in member_frames]
@@ -122,9 +129,6 @@ def recommend(
     times = [t for t in (_parse_ts(f.get("timestamp")) for f in member_frames) if t]
     observed_days = (max(times) - min(times)).days if len(times) >= 2 else window_days
 
-    failure_modes = Counter(
-        str(f.get("barrier_failure_mode")) for f in member_frames if f.get("barrier_failure_mode")
-    )
     primary_failure = (
         pattern.get("primary_barrier_failure")
         or (failure_modes.most_common(1)[0][0] if failure_modes else "not characterised")

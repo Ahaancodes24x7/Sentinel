@@ -89,21 +89,28 @@ def test_mlp_loading_and_inference():
 
 
 def test_model_registry_defaults():
-    """Verify registry defaults to baseline2 and metadata reflects both models."""
+    """With no SENTINEL_SIF_MODEL set, the registry picks the transformer when
+    its (gitignored, not committed) checkpoint happens to be present on this
+    checkout, and falls back to baseline2 otherwise - not a fixed literal,
+    because which one is true varies legitimately between a fresh clone and a
+    machine that has run scripts/train_transformer_part2_finetune.py. Either
+    way, `default_sif_model` (the documented, always-available fallback) is
+    unaffected by what happens to be on disk right now.
+    """
     registry = ModelRegistry()
-    assert registry.get_configured_model_name() == "baseline2"
-    active = registry.get_active_model()
-    assert isinstance(active, Baseline2Model)
-
-    mlp = registry.get_model("mlp")
-    assert isinstance(mlp, MLPModel)
+    assert registry.get_configured_model_name() in ("baseline2", "transformer")
+    assert isinstance(registry.get_model("mlp"), MLPModel)
+    assert isinstance(registry.get_model("baseline2"), Baseline2Model)
 
     meta = registry.get_metadata()
-    assert meta["active_sif_model"] == "baseline2"
     assert meta["default_sif_model"] == "baseline2"
     assert meta["mlp_available"] is True
-    assert "baseline2" in meta["available_models"]
-    assert "mlp" in meta["available_models"]
+    assert {"baseline2", "mlp", "transformer"} <= set(meta["available_models"])
+
+    if meta["transformer_available"]:
+        assert meta["active_sif_model"] == "transformer"
+    else:
+        assert meta["active_sif_model"] == "baseline2"
 
 
 def test_environment_variable_model_selection(monkeypatch):

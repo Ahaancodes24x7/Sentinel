@@ -1,7 +1,7 @@
 {
   "model_version": "sentinel-v2.0",
   "dataset": {
-    "path": "E:\\SIH 26\\SAMARTH\\aiml\\data\\synthetic\\synthetic_uauc_reports.csv",
+    "path": "C:\\Users\\HP\\Downloads\\Sentinel\\aiml\\data\\synthetic\\synthetic_uauc_reports.csv",
     "n_total": 25000,
     "n_train": 15000,
     "n_val": 5000,
@@ -46,9 +46,9 @@
         "but",
         "being",
         "general work",
-        "general",
         "the general",
         "work area",
+        "general",
         "area at",
         "inside",
         "inside the",
@@ -59,8 +59,8 @@
       "top_negative_tokens": [
         "and",
         "vicinity",
-        "the vicinity",
         "vicinity at",
+        "the vicinity",
         "before",
         "no personnel",
         "tested",
@@ -69,29 +69,11 @@
         "housekeeping",
         "start",
         "the area",
-        "the activity",
         "activity",
+        "the activity",
         "crew confirmed"
       ],
       "outcome_shortcut_tokens": []
-    },
-    "B3_embedding_knn": {
-      "precision": 0.6432,
-      "recall": 0.4917,
-      "f1": 0.5573,
-      "f2": 0.516,
-      "accuracy": 0.6626,
-      "flagged_fraction": 0.3302,
-      "confusion": {
-        "tn": 2251,
-        "fp": 589,
-        "fn": 1098,
-        "tp": 1062
-      },
-      "pr_auc": 0.6647,
-      "ece": 0.028,
-      "backend": "sentence-transformers:sentence-transformers/all-MiniLM-L6-v2",
-      "fit_seconds": 139.8
     },
     "B4_calibrated_production": {
       "precision": 0.9667,
@@ -213,26 +195,26 @@
       }
     },
     "B5_hybrid_reasoner": {
-      "precision": 0.7342,
-      "recall": 0.8475,
-      "f1": 0.7868,
-      "f2": 0.8221,
-      "accuracy": 0.8036,
-      "flagged_fraction": 0.4936,
+      "precision": 0.7147,
+      "recall": 0.8444,
+      "f1": 0.7741,
+      "f2": 0.8148,
+      "accuracy": 0.7973,
+      "flagged_fraction": 0.486,
       "confusion": {
-        "tn": 1103,
-        "fp": 328,
-        "fn": 163,
-        "tp": 906
+        "tn": 675,
+        "fp": 208,
+        "fn": 96,
+        "tp": 521
       },
-      "lsr_top1_accuracy": 0.753,
+      "lsr_top1_accuracy": 0.7601,
       "bucket_distribution": {
-        "LOW_CONF_REVIEW": 1159,
-        "NEEDS_MORE_INFO": 727,
-        "HIGH_CONF_NON_SIF": 454,
-        "HIGH_CONF_SIF": 160
+        "LOW_CONF_REVIEW": 747,
+        "NEEDS_MORE_INFO": 411,
+        "HIGH_CONF_NON_SIF": 237,
+        "HIGH_CONF_SIF": 105
       },
-      "ms_per_report": 13.4
+      "ms_per_report": 25.2
     }
   },
   "lsr": {
@@ -467,5 +449,5 @@
     },
     "ece": 0.0011
   },
-  "elapsed_seconds": 262.5
+  "elapsed_seconds": 148.8
 }

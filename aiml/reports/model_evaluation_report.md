@@ -1,6 +1,6 @@
 # Sentinel — Model Evaluation Report
 
-Model version `sentinel-v2.0` · 262s total train+eval time.
+Model version `sentinel-v2.0` · 149s total train+eval time.
 
 > **Validation status: internal consistency only.** Every number below is
 > measured against a held-out split of the *synthetic* corpus and therefore
@@ -34,9 +34,9 @@ not assumed.
 |---|---|---|---|---|---|
 | B1 keyword / rule | 0.231 | 0.827 | 0.269 | — | 12.0% |
 | B2 TF-IDF + LogReg | 0.954 | 0.947 | 0.952 | 0.958 | 43.5% |
-| B3 embedding kNN | 0.492 | 0.643 | 0.516 | 0.665 | 33.0% |
+| B3 embedding kNN | — | — | — | — | — |
 | **B4 calibrated word+char (production)** | 0.914 | 0.967 | 0.924 | 0.959 | 40.8% |
-| B5 hybrid extraction + SCL reasoner | 0.848 | 0.734 | 0.822 | — | 49.4% |
+| B5 hybrid extraction + SCL reasoner | 0.844 | 0.715 | 0.815 | — | 48.6% |
 
 ## Production model operating point
 
@@ -61,7 +61,7 @@ backwards for near-miss reports. Top positive tokens of the interpretable
 bag-of-words baseline:
 
 ```
-working, radiography, worker was, but, being, general work, general, the general, work area, area at, inside, inside the, place at, was being, pipeline welds
+working, radiography, worker was, but, being, general work, the general, work area, general, area at, inside, inside the, place at, was being, pipeline welds
 ```
 
 No injury/outcome tokens in the top features. The model is keying on barrier and energy language, which is the intended behaviour.
@@ -97,18 +97,18 @@ B4 — it is that every decision arrives with the extracted fields, spans and
 an ontology-grounded justification attached, which an end-to-end classifier
 structurally cannot provide.
 
-- Recall 0.848 · Precision 0.734 · F2 0.822
-- LSR top-1 (ontology lookup, not learned): 0.753
-- 13 ms/report single-threaded
+- Recall 0.844 · Precision 0.715 · F2 0.815
+- LSR top-1 (ontology lookup, not learned): 0.760
+- 25 ms/report single-threaded
 
 Review-bucket distribution:
 
 | Bucket | Reports |
 |---|---|
-| LOW_CONF_REVIEW | 1159 |
-| NEEDS_MORE_INFO | 727 |
-| HIGH_CONF_NON_SIF | 454 |
-| HIGH_CONF_SIF | 160 |
+| LOW_CONF_REVIEW | 747 |
+| NEEDS_MORE_INFO | 411 |
+| HIGH_CONF_NON_SIF | 237 |
+| HIGH_CONF_SIF | 105 |
 
 ## Saturated metrics — read these as a warning, not a result
 

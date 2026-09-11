@@ -261,6 +261,20 @@ def _extract_heuristic_fields(text: str, lsr_tag: str) -> dict[str, Any]:
     }
 
 
+def _model_agreement_detail(model_agreement: dict[str, Any]) -> str:
+    """Human-readable line for reasoning_steps — see routing.route_prediction."""
+    if not model_agreement.get("available"):
+        return "No learned model was available to cross-check this verdict."
+    verdict = "SIF-potential" if model_agreement["model_sif_potential"] else "non-SIF"
+    pct = round(model_agreement["model_confidence"] * 100, 1)
+    version = model_agreement.get("model_version") or "active model"
+    if model_agreement["agrees"]:
+        return f"{version} agrees: {pct}% {verdict}."
+    if model_agreement["escalated"]:
+        return f"{version} disagrees ({pct}% {verdict}) — routed to review rather than silently overruled."
+    return f"{version} leans {verdict} ({pct}%), below the disagreement threshold to escalate on its own."
+
+
 def run_single(
     report_id: str,
     report_text: str,
@@ -350,13 +364,14 @@ def run_single(
     # Stage 3: Confidence Calibration & 4-Bucket Routing
     # -----------------------------------------------------------------------
     base_confidence = energy_classification.get("confidence", 0.70)
-    bucket, calibrated_confidence = route_prediction(
+    bucket, calibrated_confidence, model_agreement = route_prediction(
         sif_potential=sif_potential,
         base_confidence=base_confidence,
         decision_factors=decision_factors,
         consistency_result=consistency_result,
         barrier_status=barrier_status,
         candidate_needs_info=candidate_needs_info,
+        model_signal=energy_classification.get("sif_signal"),
     )
 
     # -----------------------------------------------------------------------
@@ -510,6 +525,7 @@ def run_single(
         "lsr_tag": reasoner_result["lsr_tag"],
         "justification": reasoner_result["justification"],
         "model_version": model_ver,
+        "model_agreement": model_agreement,
     }
 
     structured_reasoning = {
@@ -562,7 +578,9 @@ def run_single(
             {"step": 5, "label": "Credible consequence", "detail": reasoner_result.get("credible_consequence", {}).get("primary_consequence", "No consequence mapped")},
             {"step": 6, "label": "SIF potential", "detail": "SIF potential likely" if sif_potential else "No SIF pathway supported by current evidence"},
             {"step": 7, "label": "LSR", "detail": reasoner_result.get("lsr_tag", "unresolved")},
+            {"step": 8, "label": "Model cross-check", "detail": _model_agreement_detail(model_agreement)},
         ],
+        "model_agreement": model_agreement,
         "provenance": {
             "energy_source": energy_classification.get("high_energy_source", energy_classification.get("source", "fallback")),
             "barrier_source": "raw_text_evidence",
@@ -640,5 +658,6 @@ def get_model_status() -> dict[str, Any]:
             "model_version": "baseline2-v0.3",
             "active_sif_model": "baseline2",
             "mlp_available": True,
-            "available_models": ["baseline2", "mlp"],
+            "transformer_available": False,
+            "available_models": ["baseline2", "mlp", "transformer"],
         }

@@ -79,6 +79,7 @@ try:
         LoginResponse,
         MeResponse,
         MetricWeights,
+        ModelAgreement,
         PaginatedAuditLog,
         PaginatedReports,
         PatternType,
@@ -172,6 +173,7 @@ except ImportError:
         LoginResponse,
         MeResponse,
         MetricWeights,
+        ModelAgreement,
         PaginatedAuditLog,
         PaginatedReports,
         PatternType,
@@ -996,6 +998,11 @@ def get_report_detail(
             lsr_tag=clf["lsr_tag"],
             justification=clf["justification"],
             model_version=clf["model_version"],
+            model_agreement=(
+                ModelAgreement(**clf["model_agreement"])
+                if isinstance(clf.get("model_agreement"), dict)
+                else None
+            ),
             reasoning_chain=[
                 ReasoningStep(**step)
                 for step in (
@@ -1642,6 +1649,9 @@ def get_recommendation_detail(
                 control_level=i["control_level"],
                 priority=i["priority"],
                 action=i["action"],
+                addresses=i.get("addresses", []),
+                matched_failure_modes=i.get("matched_failure_modes", []),
+                evidence_match_count=i.get("evidence_match_count", 0),
             )
             for i in detail["recommended_interventions"]
         ],
@@ -1892,6 +1902,7 @@ def health():
         model_version=status_info.get("model_version", "baseline2-v0.3"),
         active_sif_model=status_info.get("active_sif_model", "baseline2"),
         mlp_available=status_info.get("mlp_available", True),
+        transformer_available=status_info.get("transformer_available", False),
         db=db_status,
     )
 

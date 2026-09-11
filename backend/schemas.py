@@ -188,6 +188,24 @@ class ReasoningStep(BaseModel):
     detail: str
 
 
+class ModelAgreement(BaseModel):
+    """Whether the active learned classifier (see ModelRegistry) concurs with
+    the deterministic SCL verdict on THIS report. `available=False` means no
+    model ran (e.g. the transformer checkpoint isn't present on this
+    checkout) - distinct from a model that ran and disagreed. See
+    confidence/routing.py's route_prediction for the escalation rule this
+    reflects: a confident disagreement demotes a HIGH_CONF_* bucket to
+    LOW_CONF_REVIEW rather than being silently discarded.
+    """
+    model_config = {"protected_namespaces": ()}
+    available: bool
+    agrees: Optional[bool] = None
+    model_sif_potential: Optional[bool] = None
+    model_confidence: Optional[float] = None
+    model_version: Optional[str] = None
+    escalated: bool = False
+
+
 class VoiceProvenance(BaseModel):
     """How a spoken report reached the pipeline.
 
@@ -218,6 +236,7 @@ class Classification(BaseModel):
     # Surfaced on the classification (not buried in the reasoning blob) because
     # the report detail view renders it as the primary explanation of the call.
     reasoning_chain: list[ReasoningStep] = Field(default_factory=list)
+    model_agreement: Optional[ModelAgreement] = None
     # Present only on reports spoken into the ESP32 voice node. A reviewer
     # judging the wording of a transcript needs to know it is a transcript, and
     # how well the recogniser thought it heard it - so this travels with the
@@ -514,6 +533,12 @@ class RecommendedIntervention(BaseModel):
     control_level: str  # "engineering" | "administrative" | "procedural" | "training"
     priority: str
     action: str
+    # The barrier failure modes (configs/ontology.yaml vocabulary) this
+    # control is curated to address, and which of THIS pattern's own counted
+    # observations fall into that set - see intervention_library.get_interventions.
+    addresses: list[str] = Field(default_factory=list)
+    matched_failure_modes: list[str] = Field(default_factory=list)
+    evidence_match_count: int = 0
 
 
 class RecommendationDetail(BaseModel):
@@ -595,6 +620,7 @@ class HealthResponse(BaseModel):
     db: str
     active_sif_model: Optional[str] = "baseline2"
     mlp_available: Optional[bool] = True
+    transformer_available: Optional[bool] = False
 
 
 class LoginRequest(BaseModel):
