@@ -26,7 +26,6 @@ import {
 import { BUCKET_META, type Bucket } from '../api/types';
 import { cn } from '../lib/cn';
 import { ALL_SITES, useSelectedSite, useSiteUrlSync } from '../lib/siteContext';
-import { DemoDataNotice } from '../components/map/OperationsMap';
 
 const BUCKET_TONE: Record<Bucket, Tone> = {
   HIGH_CONF_SIF: 'critical',
@@ -464,8 +463,6 @@ export function DashboardPage() {
           </Hint>
         </div>
       </div>
-
-      {siteScoped && <DemoDataNotice />}
 
       {/* Three metrics, not four */}
       <Stagger className="grid grid-cols-1 gap-3 sm:grid-cols-3">

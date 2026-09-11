@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, LogOut, MapPin, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { LogOut, MapPin, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../../lib/cn';
 import { Chip, LiveClock, PulseDot } from '../kinetic';
@@ -7,27 +7,6 @@ import { Hint, HINTS } from '../common/Hint';
 import { useHealth, useRecomputePatterns, useTrends } from '../../api/hooks';
 import { clearSession } from '../../api/client';
 import { useSelectedSite } from '../../lib/siteContext';
-
-/**
- * The synthetic-data banner is permanent and non-dismissible by design.
- *
- * The research blueprint is blunt about this: presenting synthetic reports as
- * though they were OIL production data is the fastest way to lose credibility
- * in a Q&A. So the provenance is stated on every screen, at the top, where it
- * cannot be missed or scrolled past.
- */
-function ProvenanceBanner() {
-  return (
-    <Hint content={HINTS.syntheticBanner} side="bottom">
-      <div className="flex w-full items-center gap-2 border-b border-medium-edge bg-medium-wash px-4 py-1">
-        <AlertTriangle className="h-3 w-3 shrink-0 text-medium" strokeWidth={2.2} />
-        <span className="font-mono text-2xs tracked text-medium">
-          SYNTHETIC DEMONSTRATION DATASET — NOT OIL PRODUCTION DATA
-        </span>
-      </div>
-    </Hint>
-  );
-}
 
 /** Scrolling alert ticker fed by real CUSUM/EWMA signals. */
 function AlertTicker() {
@@ -89,7 +68,7 @@ function SiteSelector() {
   const { selectedSite, setSelectedSiteId, sites } = useSelectedSite();
   return (
     <Hint
-      content="Active demonstration site. Scopes Reports, the dashboard, patterns, trends and Live Safety Vision's camera list — shared with the Operations Map."
+      content="Active OIL India site for this demo. Drives the camera list on Live Safety Vision."
       side="bottom"
     >
       <div className="flex items-center gap-1.5 rounded-sm border border-line-bright px-2 py-1 text-ink-2">
@@ -126,8 +105,6 @@ export function Topbar() {
 
   return (
     <header className="relative z-20 shrink-0 border-b border-line bg-surface/70 backdrop-blur-xl">
-      <ProvenanceBanner />
-
       <div className="flex h-12 items-center gap-4 px-4">
         {/* Connection state — never ambiguous */}
         <Hint

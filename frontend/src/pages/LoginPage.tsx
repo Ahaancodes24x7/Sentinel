@@ -34,6 +34,7 @@ export function LoginPage() {
       localStorage.setItem(TOKEN_KEY, res.access_token);
       localStorage.setItem(ROLE_KEY, res.role);
       localStorage.setItem(USER_KEY, username);
+      sessionStorage.setItem('sentinel_just_logged_in', '1');
       navigate(from, { replace: true });
     } catch (err) {
       setError(

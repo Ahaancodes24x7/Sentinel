@@ -10,14 +10,12 @@
  * endpoints; nothing here is fabricated.
  *
  * Site LOCATIONS are real public geographic references. The reports, SIF
- * counts and camera feeds attached to them are synthetic demonstration
- * data — see DemoDataNotice below and the banner already shown on every
- * console screen.
+ * counts and camera feeds attached to them are synthetic demonstration data.
  */
 import { useMemo } from 'react';
 import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet';
 import L from 'leaflet';
-import { AlertTriangle, MapPin } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { Chip } from '../kinetic';
 import { useReviewQueue, useSiteDetail, useSites } from '../../api/hooks';
 import { REAL_DEMO_SITES, useSelectedSite } from '../../lib/siteContext';
@@ -76,17 +74,6 @@ function PopoverStat({ label, value, tone = 'text-ink' }: { label: string; value
     <div className="rounded-sm border border-line bg-surface-3 px-1.5 py-1.5 text-center">
       <div className={`font-mono text-sm tabular ${tone}`}>{value}</div>
       <div className="mt-0.5 font-mono text-[8px] tracked text-ink-4">{label}</div>
-    </div>
-  );
-}
-
-export function DemoDataNotice({ className }: { className?: string }) {
-  return (
-    <div
-      className={`flex items-center gap-1.5 font-mono text-2xs tracked text-medium ${className ?? ''}`}
-    >
-      <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={2.2} />
-      DEMONSTRATION DATA — NOT LIVE OIL DATA
     </div>
   );
 }

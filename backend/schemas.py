@@ -20,6 +20,17 @@ class Bucket(str, Enum):
 class Source(str, Enum):
     synthetic = "synthetic"
     real = "real"
+    # Spoken into the ESP32 field node and transcribed on the laptop. Kept
+    # distinct from "real" because the text is a machine transcript rather than
+    # words a person typed and checked, and a reviewer needs to see that
+    # difference before trusting a wording.
+    voice = "voice"
+    # Filed automatically by the CCTV analytics pipeline from what a camera
+    # saw, with no human in the loop at write time. Kept distinct from "real"
+    # and "voice" because a reviewer must be able to see that no person has
+    # yet confirmed the observation, and from "synthetic" because the
+    # observation is of a genuine scene rather than a generated corpus.
+    vision = "vision"
 
 
 class Role(str, Enum):
@@ -115,6 +126,12 @@ class ReportListItem(BaseModel):
     sif_potential: bool
     bucket: Bucket
     lsr_tag: str
+    # A list row has to be able to show that a report was filed by a camera
+    # rather than a person, and how urgently it needs answering - otherwise an
+    # auto-filed P1 looks identical to a routine synthetic record in the queue.
+    source: Source = Source.synthetic
+    priority: Optional[str] = None
+    auto_filed: bool = False
 
 
 class PaginatedReports(BaseModel):
@@ -171,6 +188,24 @@ class ReasoningStep(BaseModel):
     detail: str
 
 
+class VoiceProvenance(BaseModel):
+    """How a spoken report reached the pipeline.
+
+    Deliberately separate from the SIF confidence: "we may have misheard this"
+    and "this may not be a precursor" are different doubts, and a console that
+    showed one number for both would let a clean recording of an ambiguous
+    hazard look the same as a garbled recording of an obvious one.
+    """
+
+    device_id: Optional[str] = None
+    asr_model: Optional[str] = None
+    asr_confidence: Optional[float] = None
+    asr_language: Optional[str] = None
+    audio_seconds: Optional[float] = None
+    clip_id: Optional[str] = None
+    transcript_is_machine_generated: bool = True
+
+
 class Classification(BaseModel):
     model_config = {"protected_namespaces": ()}
     sif_potential: bool
@@ -183,6 +218,27 @@ class Classification(BaseModel):
     # Surfaced on the classification (not buried in the reasoning blob) because
     # the report detail view renders it as the primary explanation of the call.
     reasoning_chain: list[ReasoningStep] = Field(default_factory=list)
+    # Present only on reports spoken into the ESP32 voice node. A reviewer
+    # judging the wording of a transcript needs to know it is a transcript, and
+    # how well the recogniser thought it heard it - so this travels with the
+    # classification to the console rather than being dropped at the boundary.
+    voice_provenance: Optional[VoiceProvenance] = None
+    # Present only on reports the CCTV analytics pipeline filed by itself.
+    # A reviewer opening one of these has to be able to see, without leaving
+    # the page, that no human wrote it, which camera event produced it, and
+    # why it carries the priority it does - so the whole provenance travels
+    # with the classification rather than being dropped at the boundary.
+    auto_filed: Optional[bool] = None
+    priority: Optional[str] = None
+    priority_label: Optional[str] = None
+    priority_rationale: Optional[str] = None
+    recommended_action: Optional[str] = None
+    vision_event_id: Optional[str] = None
+    vision_event_type: Optional[str] = None
+    vision_severity: Optional[str] = None
+    vision_confidence: Optional[float] = None
+    vision_camera_id: Optional[str] = None
+    vision_camera_name: Optional[str] = None
 
 
 class ReportDetail(BaseModel):
@@ -393,6 +449,8 @@ class RecommendationListItem(BaseModel):
     evidence_summary: EvidenceSummary
     primary_barrier_failure: str
     priority: str  # "HIGH" | "MEDIUM" | "LOW"
+    barrier_type: str
+    primary_lsr: str
 
 
 class RecommendationsResponse(BaseModel):
@@ -464,6 +522,8 @@ class RecommendationDetail(BaseModel):
     evidence: EvidenceDetail
     recommended_interventions: list[RecommendedIntervention]
     expected_objective: str
+    barrier_type: str
+    primary_lsr: str
 
 
 class ActionPlanRequest(BaseModel):
@@ -553,9 +613,13 @@ class MeResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Live Safety Vision
+# Camera Watch — CCTV hazard monitoring
 # ---------------------------------------------------------------------------
 class VisionSeverity(str, Enum):
+    # `critical` covers the events that need someone dispatched now rather
+    # than reviewed later: a confirmed flame, a worker who is down and not
+    # moving, a mass reaching a person.
+    critical = "critical"
     high = "high"
     medium = "medium"
     low = "low"
@@ -570,6 +634,45 @@ class VisionSourceType(str, Enum):
     webcam = "webcam"
     demo_video = "demo_video"
     rtsp = "rtsp"
+
+
+class VisionPriority(str, Enum):
+    """Response priority of the complaint an event filed automatically."""
+    p1 = "P1"
+    p2 = "P2"
+    p3 = "P3"
+    p4 = "P4"
+
+
+class VisionRegion(BaseModel):
+    """A pixel area a scene-level analyzer flagged (flame, plume, falling mass,
+    person on the ground). Normalized 0..1 against the frame."""
+    kind: str
+    bbox: list[float]
+    score: float = 0.0
+    area_ratio: float = 0.0
+
+
+class VisionSignals(BaseModel):
+    """Continuous per-frame hazard indices.
+
+    Rendered live by the console so an operator watches a hazard index climb
+    BEFORE it crosses a threshold, instead of only seeing the alarm after it
+    has already fired.
+    """
+    fire_score: float = 0.0
+    smoke_score: float = 0.0
+    motion_score: float = 0.0
+    visibility: float = 1.0
+    visibility_drop: float = 0.0
+    fire_active: bool = False
+    smoke_active: bool = False
+    visibility_active: bool = False
+    person_count: int = 0
+    occupancy_delta: int = 0
+    regions: list[VisionRegion] = Field(default_factory=list)
+    frame_index: int = 0
+    analyzer_ready: bool = False
 
 
 class VisionDetectedObject(BaseModel):
@@ -656,9 +759,22 @@ class VisionSafetyEvent(BaseModel):
     inference: str
     sif_relevance: str
     lsr_tag: str
+    hazard_class: str = "scene"
+    regions: list[VisionRegion] = Field(default_factory=list)
     status: VisionEventStatus = VisionEventStatus.active
     acknowledged_by: Optional[str] = None
     acknowledged_at: Optional[datetime] = None
+
+    # The complaint this event filed automatically, and the priority the
+    # combined camera + SIF-pipeline assessment gave it. Null only if the
+    # filing itself failed, in which case `auto_report_error` says why - the
+    # event is never dropped because its report could not be written.
+    auto_report_id: Optional[str] = None
+    auto_report_priority: Optional[VisionPriority] = None
+    auto_report_priority_label: Optional[str] = None
+    auto_report_bucket: Optional[str] = None
+    auto_report_sif: Optional[bool] = None
+    auto_report_error: Optional[str] = None
 
 
 class VisionAnalyzeFrameResponse(BaseModel):
@@ -672,6 +788,8 @@ class VisionAnalyzeFrameResponse(BaseModel):
     model_config = {"protected_namespaces": ()}
     model_name: str
     device: str
+    signals: VisionSignals = Field(default_factory=VisionSignals)
+    latency_ms: float = 0.0
     skipped: bool = False
 
 
@@ -684,15 +802,59 @@ class VisionStatusResponse(BaseModel):
     vehicle_count: int = 0
     active_hazards: int = 0
     high_priority_hazards: int = 0
+    auto_reports_filed: int = 0
+    frames_processed: int = 0
+    events_raised: int = 0
     model_config = {"protected_namespaces": ()}
     model_name: str
     device: str
     model_ready: bool
     model_error: Optional[str] = None
     last_frame_at: Optional[datetime] = None
+    signals: VisionSignals = Field(default_factory=VisionSignals)
     demo_notice: str
 
 
 class VisionEventsResponse(BaseModel):
     events: list[VisionSafetyEvent]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Voice reports (ESP32 voice node)
+# ---------------------------------------------------------------------------
+class VoiceReportIngestRequest(BaseModel):
+    """A spoken observation, already transcribed on the laptop.
+
+    The transcript is the report text and goes through the identical Stage 0-3
+    path a typed report takes. What is extra here is provenance: a reviewer
+    reading this in the queue must be able to tell it came from speech
+    recognition and may have misheard a word, which is not something you can
+    infer from the text alone once it is sitting in a list.
+    """
+
+    site: str
+    transcript: str = Field(min_length=1)
+    device_id: str
+    # Whisper's mean segment probability. Distinct from the SIF confidence the
+    # pipeline produces: this is "did we hear it right", not "is it a precursor".
+    asr_confidence: Optional[float] = None
+    asr_model: Optional[str] = None
+    asr_language: Optional[str] = None
+    audio_seconds: Optional[float] = None
+    clip_id: Optional[str] = None
+    reporter_role: Optional[str] = None
+    captured_at: Optional[datetime] = None
+
+
+class VoiceReportIngestResponse(BaseModel):
+    """Small enough for the node to render on a 128x64 panel."""
+
+    report_id: str
+    bucket: str
+    sif_potential: bool
+    confidence: float
+    lsr_tag: str
+    site: str
+    transcript: str
+    accepted: bool = True

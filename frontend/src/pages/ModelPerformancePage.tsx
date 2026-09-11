@@ -4,7 +4,6 @@ import { Bar, Chip, Counter, PanelHead, PulseDot, ScanPanel } from '../component
 import { PanelLoading, QueryError } from '../components/common/QueryState';
 import { useHealth, useSummary } from '../api/hooks';
 import { BUCKET_META, type Bucket } from '../api/types';
-import { cn } from '../lib/cn';
 
 const BUCKET_TONE: Record<Bucket, 'critical' | 'high' | 'medium' | 'low'> = {
   HIGH_CONF_SIF: 'critical',
@@ -161,14 +160,6 @@ export function ModelPerformancePage() {
                 only meaningful if a stated confidence of 0.9 is right about 90% of the time, so
                 Expected Calibration Error is reported alongside PR-AUC.
               </p>
-              <div className="flex items-start gap-2 rounded-md border border-medium-edge bg-medium-wash px-3 py-2">
-                <span className={cn('mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-medium')} />
-                <p className="text-xs text-ink-2">
-                  All held-out metrics are internal consistency validation against a synthetic
-                  corpus. They are not production validation — real acceptance criteria can only be
-                  set with OIL HSE SMEs after a pilot on real exported data.
-                </p>
-              </div>
             </div>
           </ScanPanel>
         </>

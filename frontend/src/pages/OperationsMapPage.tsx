@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRight, MapPinned, ShieldAlert } from 'lucide-react';
 import { Bar, Chip, Counter, PanelHead, PulseDot, ScanPanel } from '../components/kinetic';
 import { PanelLoading, QueryError } from '../components/common/QueryState';
-import { DemoDataNotice, OperationsMap } from '../components/map/OperationsMap';
+import { OperationsMap } from '../components/map/OperationsMap';
 import { useClusters, useReviewQueue, useSiteDetail, useSummary } from '../api/hooks';
 import { ALL_SITES, REAL_DEMO_SITES, useSelectedSite, useSiteUrlSync } from '../lib/siteContext';
 
@@ -180,7 +180,6 @@ export function OperationsMapPage() {
             Select a demonstration site to view site-specific safety intelligence.
           </p>
         </div>
-        <DemoDataNotice />
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.6fr_1fr]">
@@ -190,13 +189,6 @@ export function OperationsMapPage() {
 
         {selectedSite.site_id === ALL_SITES.site_id ? <AllSitesOverview /> : <SiteIntelligencePanel />}
       </div>
-
-      <p className="text-xs text-ink-4">
-        Site locations are real geographic references publicly associated with OIL India Limited.
-        Safety observations, precursor clusters, trends and camera feeds shown for them are
-        synthetic demonstration data generated for this prototype — not real-time OIL incidents or
-        live OIL cameras.
-      </p>
     </div>
   );
 }

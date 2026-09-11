@@ -24,7 +24,7 @@ import { Counter, PulseDot } from '../kinetic';
 import { Hint } from '../common/Hint';
 import { useReviewQueue, useSummary } from '../../api/hooks';
 
-interface NavItem {
+export interface NavItem {
   to: string;
   label: string;
   icon: typeof LayoutDashboard;
@@ -43,7 +43,7 @@ interface NavItem {
  * Every item carries a hint, because half these labels are domain jargon that
  * means nothing until someone explains it once.
  * ----------------------------------------------------------------------- */
-const SECTIONS: { title: string; items: NavItem[] }[] = [
+export const SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Daily',
     items: [
@@ -61,9 +61,9 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       },
       {
         to: '/live-vision',
-        label: 'Live Safety Vision',
+        label: 'Camera Watch',
         icon: Camera,
-        hint: 'Real-time YOLO object detection over a webcam or a demo video, with configurable safety-zone rules and live hazard events.',
+        hint: 'CCTV hazard monitoring over an uploaded video or a live webcam: fire, smoke, visibility loss, falls, falling masses and zone breaches. Anything it detects files its own prioritised complaint.',
       },
       {
         to: '/submit',

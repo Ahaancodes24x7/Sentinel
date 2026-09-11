@@ -1,10 +1,21 @@
+import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Sidebar } from '../components/layout/Sidebar';
 import { Topbar } from '../components/layout/Topbar';
+import { shouldShowWelcomeGuide, WelcomeGuide } from '../components/common/WelcomeGuide';
+
+/** Only pops right after a fresh login (set by LoginPage), never on a route
+ *  change within an already-open session or on a plain page refresh. */
+function checkFreshLogin() {
+  const justLoggedIn = sessionStorage.getItem('sentinel_just_logged_in') === '1';
+  sessionStorage.removeItem('sentinel_just_logged_in');
+  return justLoggedIn && shouldShowWelcomeGuide();
+}
 
 export function MainLayout() {
   const location = useLocation();
+  const [showWelcome, setShowWelcome] = useState(checkFreshLogin);
 
   return (
     <div className="field-grid scanlines flex h-screen overflow-hidden bg-bg">
@@ -38,6 +49,8 @@ export function MainLayout() {
           </AnimatePresence>
         </main>
       </div>
+
+      {showWelcome && <WelcomeGuide onClose={() => setShowWelcome(false)} />}
     </div>
   );
 }

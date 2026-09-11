@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Filter, MapPinned, Search } from 'lucide-react';
 import { Chip, Counter, PanelHead, PulseDot, ScanPanel, type Tone } from '../components/kinetic';
@@ -21,8 +21,12 @@ const PAGE_SIZE = 40;
 export function ReportsPage() {
   const { selectedSite } = useSelectedSite();
   const siteScoped = selectedSite.site_id !== ALL_SITES.site_id;
+  // Seeded once from `?lsr=` so a link from Life-Saving Rules or Interventions
+  // ("view the 14 reports behind this") lands already filtered, not on a
+  // generic unfiltered list the visitor has to re-narrow by hand.
+  const [params] = useSearchParams();
   const [bucket, setBucket] = useState<string>('');
-  const [lsr, setLsr] = useState<string>('');
+  const [lsr, setLsr] = useState<string>(() => params.get('lsr') ?? '');
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
 

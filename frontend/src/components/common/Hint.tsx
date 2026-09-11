@@ -222,6 +222,4 @@ export const HINTS = {
     'Engineering fixes outrank procedures, which outrank training. Recommendations are ordered by this, from a fixed human-written library.',
   spans:
     'The exact words in the report that drove each part of the decision. Hover a colour in the legend to isolate it.',
-  syntheticBanner:
-    'This corpus is generated for the prototype. It is not Oil India data, and the banner stays up so no screenshot can imply otherwise.',
 } as const;

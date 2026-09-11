@@ -26,6 +26,9 @@ export interface ReportListItem {
   lsr_tag: string;
   source?: string;
   confidence?: number;
+  /** Present on reports the CCTV pipeline filed by itself. */
+  priority?: string | null;
+  auto_filed?: boolean;
 }
 
 export interface SpanField {
@@ -64,6 +67,23 @@ export interface Classification {
   model_version: string;
   reasoning_chain?: { step: number; label: string; detail: string }[];
   decision_factors?: Record<string, unknown>;
+  /**
+   * Present only on complaints the CCTV pipeline filed by itself. A reviewer
+   * opening one has to be able to see, without leaving the page, that no human
+   * wrote it, which camera event produced it, and why it carries the priority
+   * it does.
+   */
+  auto_filed?: boolean | null;
+  priority?: string | null;
+  priority_label?: string | null;
+  priority_rationale?: string | null;
+  recommended_action?: string | null;
+  vision_event_id?: string | null;
+  vision_event_type?: string | null;
+  vision_severity?: string | null;
+  vision_confidence?: number | null;
+  vision_camera_id?: string | null;
+  vision_camera_name?: string | null;
 }
 
 export interface ReportDetail {
@@ -205,6 +225,10 @@ export interface RecommendationListItem {
   };
   primary_barrier_failure: string;
   priority: Priority;
+  /** Curated barrier this pattern is filed under — the key into the intervention library. */
+  barrier_type: string;
+  /** IOGP Life-Saving Rule this pattern's controlling energy types map to. "N/A" if unresolved. */
+  primary_lsr: string;
 }
 
 export interface RecommendedIntervention {
@@ -229,6 +253,8 @@ export interface RecommendationDetail {
   };
   recommended_interventions: RecommendedIntervention[];
   expected_objective: string;
+  barrier_type: string;
+  primary_lsr: string;
 }
 
 /* -------------------------------------------------------------------------
@@ -310,6 +336,7 @@ export interface Ontology {
     }
   >;
   activities?: string[];
+  activity_energy_map?: Record<string, string[]>;
   sites?: { name: string; type: string; region: string; workforce: number }[];
   density_metric?: { calibrated: boolean; note: string; weights: Record<string, number> };
   [key: string]: unknown;
@@ -323,10 +350,11 @@ export const BUCKET_META: Record<Bucket, { label: string; short: string; tone: s
 };
 
 /* -------------------------------------------------------------------------
- * Live Safety Vision
+ * CCTV hazard monitoring
  * ---------------------------------------------------------------------- */
 
-export type VisionSeverity = 'high' | 'medium' | 'low';
+export type VisionSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type VisionPriority = 'P1' | 'P2' | 'P3' | 'P4';
 export type VisionEventStatus = 'active' | 'acknowledged';
 export type VisionSourceType = 'webcam' | 'demo_video' | 'rtsp';
 
@@ -356,6 +384,32 @@ export interface VisionCamerasResponse {
   demo_notice: string;
 }
 
+/** A pixel area a scene analyzer flagged - flame, plume, falling mass, casualty. */
+export interface VisionRegion {
+  kind: string;
+  bbox: [number, number, number, number];
+  score: number;
+  area_ratio: number;
+}
+
+/** Continuous per-frame hazard indices, rendered live so an operator can watch
+ *  an index climb before it crosses a threshold. */
+export interface VisionSignals {
+  fire_score: number;
+  smoke_score: number;
+  motion_score: number;
+  visibility: number;
+  visibility_drop: number;
+  fire_active: boolean;
+  smoke_active: boolean;
+  visibility_active: boolean;
+  person_count: number;
+  occupancy_delta: number;
+  regions: VisionRegion[];
+  frame_index: number;
+  analyzer_ready: boolean;
+}
+
 export interface VisionSafetyEvent {
   event_id: string;
   timestamp: string;
@@ -372,9 +426,19 @@ export interface VisionSafetyEvent {
   inference: string;
   sif_relevance: string;
   lsr_tag: string;
+  hazard_class: string;
+  regions: VisionRegion[];
   status: VisionEventStatus;
   acknowledged_by?: string | null;
   acknowledged_at?: string | null;
+  /** The complaint this event filed automatically. Null only if filing itself
+   *  failed, in which case auto_report_error says why. */
+  auto_report_id?: string | null;
+  auto_report_priority?: VisionPriority | null;
+  auto_report_priority_label?: string | null;
+  auto_report_bucket?: string | null;
+  auto_report_sif?: boolean | null;
+  auto_report_error?: string | null;
 }
 
 export interface VisionEventsResponse {
@@ -391,11 +455,15 @@ export interface VisionStatusResponse {
   vehicle_count: number;
   active_hazards: number;
   high_priority_hazards: number;
+  auto_reports_filed: number;
+  frames_processed: number;
+  events_raised: number;
   model_name: string;
   device: string;
   model_ready: boolean;
   model_error?: string | null;
   last_frame_at?: string | null;
+  signals: VisionSignals;
   demo_notice: string;
 }
 
@@ -409,6 +477,8 @@ export interface VisionAnalyzeFrameResponse {
   new_events: VisionSafetyEvent[];
   model_name: string;
   device: string;
+  signals: VisionSignals;
+  latency_ms: number;
   skipped?: boolean;
 }
 
@@ -424,10 +494,34 @@ export interface VisionStartResponse {
   demo_notice: string;
 }
 
-export const VISION_SEVERITY_TONE: Record<VisionSeverity, 'critical' | 'high' | 'medium'> = {
-  high: 'critical',
-  medium: 'high',
-  low: 'medium',
+export const VISION_SEVERITY_TONE: Record<VisionSeverity, 'critical' | 'high' | 'medium' | 'low'> = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+};
+
+export const VISION_PRIORITY_TONE: Record<VisionPriority, 'critical' | 'high' | 'medium' | 'low'> = {
+  P1: 'critical',
+  P2: 'high',
+  P3: 'medium',
+  P4: 'low',
+};
+
+/** Operator-facing name for each hazard family the camera can raise. */
+export const VISION_EVENT_LABEL: Record<string, string> = {
+  fire_detected: 'Fire detected',
+  smoke_detected: 'Smoke detected',
+  visibility_loss: 'Visibility loss',
+  person_fall: 'Worker fall',
+  person_down_immobile: 'Worker down - immobile',
+  struck_by_falling_object: 'Struck by falling object',
+  falling_object: 'Falling object / roof fall',
+  crowd_dispersal: 'Sudden evacuation',
+  crowd_surge: 'Sudden crowding',
+  restricted_zone_entry: 'Restricted zone entry',
+  lifting_zone_entry: 'Lifting zone entry',
+  vehicle_person_proximity: 'Vehicle-person proximity',
 };
 
 export const BARRIER_META: Record<BarrierStatus, { label: string; tone: string; gap: string }> = {
