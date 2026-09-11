@@ -1,4 +1,4 @@
-"""Live Safety Vision — AI/ML-layer tests.
+"""Camera Watch — AI/ML-layer tests for the detection and rule boundary.
 
 Covers the computer-vision module in isolation from the backend: the YOLO
 detector wrapper, the ROI/proximity hazard-rule layer, the safety-event
@@ -29,7 +29,10 @@ from sif_engine.vision.stream_processor import get_manager
 def test_detector_initializes():
     detector = YoloDetector.get_instance()
     status = detector.status()
-    assert set(status) == {"model_name", "device", "ready", "error"}
+    # Superset, not equality: status also reports the tuning actually in use
+    # (confidence threshold, inference size), and a test that pins the exact
+    # key set turns every added diagnostic into a failure.
+    assert {"model_name", "device", "ready", "error"} <= set(status)
     assert status["device"] in ("cpu", "cuda")
     # Either it loaded (weights present / downloadable) or it failed loudly
     # with a human-readable reason — never silently.
@@ -68,7 +71,9 @@ def test_detector_handles_missing_model_gracefully():
 # ---------------------------------------------------------------------------
 def test_restricted_zone_rule_fires():
     camera = camera_registry.get_camera("DUL-C01")
-    # Restricted zone polygon is [[0.55,0.05],[0.95,0.05],[0.95,0.55],[0.55,0.55]]
+    # Restricted zone polygon is [[0.62,0.10],[0.95,0.10],[0.95,0.52],[0.62,0.52]].
+    # Zone membership is tested at the GROUND POINT (bottom-centre), so this
+    # box has to have its feet at (0.70, 0.40) to count as inside.
     person_inside = DetectedObject("person", 0.9, (0.65, 0.2, 0.75, 0.4))
     drafts = hazard_rules.evaluate([person_inside], camera)
     types = [d.event_type for d in drafts]
@@ -87,9 +92,23 @@ def test_restricted_zone_rule_does_not_fire_outside_roi():
     assert drafts == []
 
 
+def test_zone_rule_uses_ground_point_not_box_centre():
+    """A tall box whose CENTRE lands in a zone but whose feet do not must not
+    fire. Testing the centre is the single largest source of false zone alarms:
+    a person standing in front of a wall-mounted zone reads as being inside it.
+    """
+    camera = camera_registry.get_camera("DUL-C01")
+    # Centre is (0.70, 0.40) - inside the restricted polygon - but the feet are
+    # at y=0.95, well below it.
+    tall_person = DetectedObject("person", 0.9, (0.66, 0.10, 0.74, 0.95))
+    assert 0.10 <= 0.40 <= 0.52  # the centre really is inside the zone band
+    drafts = hazard_rules.evaluate([tall_person], camera)
+    assert not any(d.event_type == "restricted_zone_entry" for d in drafts)
+
+
 def test_lifting_zone_rule_fires():
     camera = camera_registry.get_camera("MOR-C01")
-    # Lifting zone polygon is [[0.05,0.55],[0.45,0.55],[0.45,0.95],[0.05,0.95]]
+    # Lifting zone polygon is [[0.06,0.58],[0.38,0.58],[0.38,0.92],[0.06,0.92]]
     person_inside = DetectedObject("person", 0.85, (0.15, 0.6, 0.25, 0.8))
     drafts = hazard_rules.evaluate([person_inside], camera)
     draft = next(d for d in drafts if d.event_type == "lifting_zone_entry")
@@ -106,9 +125,20 @@ def test_vehicle_person_proximity_rule_fires_when_close():
     truck = DetectedObject("truck", 0.88, (0.33, 0.32, 0.45, 0.55))
     drafts = hazard_rules.evaluate([person, truck], camera)
     draft = next(d for d in drafts if d.event_type == "vehicle_person_proximity")
-    assert draft.severity == "medium"
-    assert draft.lsr_tag == "Line of Fire"
+    # Well inside half the proximity threshold, so this escalates past the
+    # baseline "medium" a merely-nearby pairing would get.
+    assert draft.severity == "high"
+    assert draft.lsr_tag == "Driving"
     assert len(draft.objects) == 2
+
+
+def test_vehicle_person_proximity_severity_is_graded_by_distance():
+    camera = camera_registry.get_camera("DIG-C01")
+    person = DetectedObject("person", 0.9, (0.30, 0.30, 0.36, 0.50))
+    truck = DetectedObject("truck", 0.88, (0.40, 0.34, 0.52, 0.58))
+    drafts = hazard_rules.evaluate([person, truck], camera)
+    draft = next(d for d in drafts if d.event_type == "vehicle_person_proximity")
+    assert draft.severity == "medium"
 
 
 def test_vehicle_person_proximity_rule_does_not_fire_when_far():

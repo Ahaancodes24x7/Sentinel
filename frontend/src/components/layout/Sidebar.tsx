@@ -54,9 +54,9 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       },
       {
         to: '/live-vision',
-        label: 'Live Safety Vision',
+        label: 'Camera Watch',
         icon: Camera,
-        hint: 'Real-time YOLO object detection over a webcam or a demo video, with configurable safety-zone rules and live hazard events.',
+        hint: 'CCTV hazard monitoring over an uploaded video or a live webcam: fire, smoke, visibility loss, falls, falling masses and zone breaches. Anything it detects files its own prioritised complaint.',
       },
       {
         to: '/submit',

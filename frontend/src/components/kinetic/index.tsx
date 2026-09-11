@@ -190,12 +190,20 @@ export function Bar({
   height = 4,
   className,
   delay = 0,
+  duration = 0.8,
 }: {
   value: number; // 0..1
   tone?: Tone;
   height?: number;
   className?: string;
   delay?: number;
+  /**
+   * Fill duration in seconds. The 0.8s default suits a bar that settles once
+   * on a value; a meter driven by a live frame loop needs a much shorter one,
+   * or it spends its whole life easing toward a number that has already moved
+   * on and never actually reads as current.
+   */
+  duration?: number;
 }) {
   const pct = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0)) * 100;
   return (
@@ -208,7 +216,7 @@ export function Bar({
         className={cn('h-full rounded-full', TONE_BG[tone])}
         initial={{ width: 0 }}
         animate={{ width: `${pct}%` }}
-        transition={{ duration: 0.8, delay, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ duration, delay, ease: [0.22, 1, 0.36, 1] }}
       />
     </div>
   );

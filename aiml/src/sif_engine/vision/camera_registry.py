@@ -1,4 +1,4 @@
-"""Demo camera & safety-zone registry for Live Safety Vision.
+"""Demo camera & safety-zone registry for Camera Watch.
 
 IMPORTANT — data honesty:
 Camera identifiers here (DUL-C01, DIG-C01, MOR-C01, ...) are DEMONSTRATION
@@ -12,33 +12,43 @@ ROI polygons are given in normalized (0..1) coordinates so they render
 correctly regardless of the source video's resolution or aspect ratio, and
 are grouped by `roi_type` so the hazard-rule layer (hazard_rules.py) can stay
 generic: "restricted_zone" and "lifting_zone" trigger a zone-entry rule for
-any person detected inside them, "vehicle_lane" is descriptive/visual only
-today (proximity is evaluated directly between people and vehicles, not by
-lane membership).
+any person whose ground point falls inside them, "vehicle_lane" is
+descriptive/visual only today (proximity is evaluated directly between people
+and vehicles, not by lane membership).
+
+Zones are only one of the hazard families this system watches for. Fire,
+smoke, loss of visibility, falls and falling masses are detected from the
+scene itself and need no configuration at all, so a camera with no zones
+defined is still fully monitored for the disaster precursors that matter.
 """
 from __future__ import annotations
 
 from typing import Optional
 
+# Zone geometry note - why these are small and cornered rather than large:
+# zone membership is tested at the persons GROUND POINT (bottom-centre of the
+# box), so a zone that covers most of the frame fires on anyone standing
+# anywhere and the console fills with alarms nobody reads. Keeping each zone
+# to a bounded region of the view is what makes a zone alarm mean something.
 _RESTRICTED_ZONE = {
     "name": "Restricted Zone",
     "roi_type": "restricted_zone",
-    "points": [[0.55, 0.05], [0.95, 0.05], [0.95, 0.55], [0.55, 0.55]],
-    "hazard_context": "electrical / process equipment area",
+    "points": [[0.62, 0.10], [0.95, 0.10], [0.95, 0.52], [0.62, 0.52]],
+    "hazard_context": "energised electrical / process equipment area",
     "lsr_tag": "Energy Isolation",
 }
 _LIFTING_ZONE = {
     "name": "Lifting Exclusion Zone",
     "roi_type": "lifting_zone",
-    "points": [[0.05, 0.55], [0.45, 0.55], [0.45, 0.95], [0.05, 0.95]],
+    "points": [[0.06, 0.58], [0.38, 0.58], [0.38, 0.92], [0.06, 0.92]],
     "hazard_context": "mechanical lifting / suspended load",
     "lsr_tag": "Safe Mechanical Lifting",
 }
 _VEHICLE_LANE = {
-    "name": "Vehicle Lane",
+    "name": "Haul Road / Vehicle Lane",
     "roi_type": "vehicle_lane",
-    "points": [[0.0, 0.78], [1.0, 0.78], [1.0, 1.0], [0.0, 1.0]],
-    "hazard_context": "vehicle movement corridor",
+    "points": [[0.0, 0.86], [1.0, 0.86], [1.0, 1.0], [0.0, 1.0]],
+    "hazard_context": "mobile plant and vehicle movement corridor",
     "lsr_tag": "Line of Fire",
 }
 _DEFAULT_ROIS = [_RESTRICTED_ZONE, _LIFTING_ZONE, _VEHICLE_LANE]

@@ -3,7 +3,7 @@
  *
  * The demo now spans three real OIL India locations (Duliajan, Digboi,
  * Moran) rather than one. This context holds which one is "active" right
- * now, persisted across reloads, so Live Safety Vision (and anything else
+ * now, persisted across reloads, so Camera Watch (and anything else
  * that wants to follow it) can react to the switch without every page
  * needing its own copy of the same three-item list.
  *

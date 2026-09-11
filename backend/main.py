@@ -10,6 +10,7 @@ Docs at:   http://localhost:8000/docs
 import math
 import uuid
 from collections import Counter, defaultdict
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -111,11 +112,17 @@ try:
         VisionCamerasResponse,
         VisionDetectedObject,
         VisionEventsResponse,
+        VisionPriority,
+        VisionRegion,
+        VisionSignals,
         VisionSafetyEvent,
         VisionStartRequest,
         VisionStartResponse,
         VisionStatusResponse,
         VisionStopRequest,
+        VoiceProvenance,
+        VoiceReportIngestRequest,
+        VoiceReportIngestResponse,
         VisionStopResponse,
     )
 except ImportError:
@@ -198,11 +205,17 @@ except ImportError:
         VisionCamerasResponse,
         VisionDetectedObject,
         VisionEventsResponse,
+        VisionPriority,
+        VisionRegion,
+        VisionSignals,
         VisionSafetyEvent,
         VisionStartRequest,
         VisionStartResponse,
         VisionStatusResponse,
         VisionStopRequest,
+        VoiceProvenance,
+        VoiceReportIngestRequest,
+        VoiceReportIngestResponse,
         VisionStopResponse,
     )
 
@@ -210,7 +223,14 @@ except ImportError:
 from contextlib import asynccontextmanager
 
 from sif_engine.pipeline import get_model_status, run_batch, run_single
+from sif_engine.site_intelligence.site_registry import get_site_by_id
 from sif_engine.vision import camera_registry as vision_cameras
+from sif_engine.vision.incident_report import (
+    PRIORITY_LABELS,
+    build_complaint,
+    derive_priority,
+    is_reportable,
+)
 from sif_engine.vision.stream_processor import get_manager as get_vision_manager
 
 
@@ -220,6 +240,23 @@ async def lifespan(app: FastAPI):
         init_db()
     except Exception as exc:
         print(f"Notice: Database auto-initialization deferred or failed: {exc}")
+
+    # Load and warm the CCTV detection model off the request path. The first
+    # inference on a cold model costs ~30x steady state, and paying it inside
+    # the first analyze-frame call is what makes a camera session look like it
+    # has hung the moment an operator presses Start. Threaded so a slow first
+    # load (or a weights download) never blocks the API from serving.
+    def _warm_vision() -> None:
+        try:
+            status = get_vision_manager().preload()
+            if status.get("ready"):
+                print(f"Vision model ready: {status['model_name']} on {status['device']}")
+            else:
+                print(f"Notice: vision model unavailable: {status.get('error')}")
+        except Exception as exc:
+            print(f"Notice: vision model preload failed: {exc}")
+
+    threading.Thread(target=_warm_vision, name="vision-preload", daemon=True).start()
     yield
 
 
@@ -239,17 +276,163 @@ app.add_middleware(
 )
 
 
-def _persist_vision_events(events: list[dict]) -> None:
-    """Event sink for the vision engine: durable storage lives in Postgres.
+def _first_real_lsr(*candidates) -> str:
+    for c in candidates:
+        text_c = str(c or "").strip()
+        if text_c and text_c.upper() not in ("N/A", "NA", "NONE", "UNKNOWN"):
+            return text_c
+    return "N/A"
 
-    Registered once at import time so events are persisted the same way
-    whether they came from a browser-driven analyze-frame call or the
-    optional background RTSP worker — the aiml vision package itself has no
-    database dependency (see stream_processor.py docstring).
+
+def _file_vision_complaint(db: Session, event: dict) -> dict:
+    """Turn one CCTV hazard event into a filed complaint and return the result.
+
+    This is the join between the two halves of Sentinel. A camera event on its
+    own is a red tile on a console nobody may be watching; run through here it
+    becomes a real report in the same queue, with the same SIF classification,
+    LSR tag, review routing, clustering and audit trail as a report a person
+    typed - which is the whole point of detecting it.
+
+    The priority is deliberately the STRONGER of two independent assessments:
+
+      * what the camera saw     (severity + detection confidence)
+      * what the text pipeline made of the written complaint (SIF potential)
+
+    Taking the max rather than the average is the direct implementation of the
+    operating rule for this feature: a false alarm is acceptable, an ignored
+    report is not. A text classifier that is confidently wrong must not be
+    able to talk a detected fire down into a routine log entry.
+
+    Returns the fields to denormalise back onto the event. Never raises: a
+    failure to file is recorded on the event as `auto_report_error` and the
+    event itself still persists, because losing the sighting because the
+    paperwork failed would be the worst possible outcome here.
+    """
+    try:
+        site_id = event.get("site_id") or ""
+        site_meta = get_site_by_id(site_id) if site_id else None
+        site_name = site_meta["canonical_name"] if site_meta else (site_id or "Unknown Site")
+
+        complaint = build_complaint(event, site_name=site_name)
+        report_id = _new_id("cctv")
+
+        result = run_single(report_id, complaint["report_text"], site=site_name)
+        clf = dict(result["classification"])
+        ext = result["extracted_fields"]
+
+        steps = (result.get("reasoning") or {}).get("reasoning_steps") or []
+        if steps:
+            clf["reasoning_chain"] = steps
+
+        sif_potential = bool(clf.get("sif_potential", False))
+        pipeline_conf = float(clf.get("confidence") or 0.0)
+        priority, rationale = derive_priority(
+            vision_severity=str(event.get("severity") or "medium"),
+            sif_potential=sif_potential,
+            pipeline_confidence=pipeline_conf,
+            vision_confidence=float(event.get("confidence") or 0.0),
+        )
+
+        # Carried inside the stored classification so the report detail page,
+        # the review queue and any export all see how this report came to
+        # exist and why it was prioritised the way it was - without needing to
+        # join back to the vision event.
+        clf["auto_filed"] = True
+        clf["priority"] = priority
+        clf["priority_label"] = PRIORITY_LABELS.get(priority, priority)
+        clf["priority_rationale"] = rationale
+        clf["vision_event_id"] = event.get("event_id")
+        clf["vision_event_type"] = event.get("event_type")
+        clf["vision_severity"] = event.get("severity")
+        clf["vision_confidence"] = event.get("confidence")
+        clf["vision_camera_id"] = event.get("camera_id")
+        clf["vision_camera_name"] = event.get("camera_name")
+        clf["recommended_action"] = complaint["recommended_action"]
+
+        def _label(fieldname: str):
+            node = ext.get(fieldname)
+            if isinstance(node, dict):
+                return node.get("label") or node.get("text")
+            return node
+
+        energy_type = _label("energy_type")
+        observed_at = event.get("timestamp") or _now()
+        if isinstance(observed_at, datetime) and observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+
+        # P1 and P2 skip straight to the review queue as pending; nothing
+        # auto-closes, because no camera has confirmed anything on the ground.
+        db.add(ReportModel(
+            report_id=report_id,
+            site=site_name,
+            timestamp=observed_at,
+            source="vision",
+            report_text=complaint["report_text"],
+            sif_potential=sif_potential,
+            bucket=str(clf.get("bucket", "HIGH_CONF_NON_SIF")),
+            # The text pipeline returns the literal string "N/A" when it could not
+            # tag, which is truthy - so test for it explicitly rather than relying on
+            # falsiness, and fall back to the tag the vision rule already knows.
+            lsr_tag=_first_real_lsr(clf.get("lsr_tag"), event.get("lsr_tag")),
+            extracted_fields=ext,
+            classification=clf,
+            model_version=str(clf.get("model_version", "sentinel-v2.0")),
+            review_status="pending",
+            batch_id=None,
+            activity=complaint["activity"],
+            energy_type=energy_type,
+            barrier_type=_energy_to_barrier(energy_type),
+            barrier_status=_label("barrier_status"),
+            exposure=_label("exposure"),
+            magnitude_class=_magnitude(energy_type),
+            confidence=pipeline_conf,
+            is_high_energy=bool(_is_high_energy(energy_type)),
+            reporter_role="cctv-analytics",
+        ))
+        _audit(db, "report", report_id, f"auto-filed from vision event {event.get('event_id')}", "system:vision")
+
+        return {
+            "auto_report_id": report_id,
+            "auto_report_priority": priority,
+            "auto_report_priority_label": PRIORITY_LABELS.get(priority, priority),
+            "auto_report_bucket": str(clf.get("bucket", "")),
+            "auto_report_sif": sif_potential,
+            "auto_report_error": None,
+        }
+    except Exception as exc:
+        print(f"Vision auto-report failed for {event.get('event_id')}: {exc}")
+        return {
+            "auto_report_id": None,
+            "auto_report_priority": None,
+            "auto_report_priority_label": None,
+            "auto_report_bucket": None,
+            "auto_report_sif": None,
+            "auto_report_error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _persist_vision_events(events: list[dict]) -> list[dict]:
+    """Event sink for the vision engine: persist, then file each as a complaint.
+
+    Registered once at import time so events are handled identically whether
+    they came from a browser-driven analyze-frame call or the optional
+    background RTSP worker - the aiml vision package itself has no database
+    dependency (see stream_processor.py docstring).
+
+    Returns the events enriched with their auto-report fields, which the
+    stream processor passes straight back to the caller, so the console can
+    show the filed report and its priority in the same response that raised
+    the alarm.
     """
     db = SessionLocal()
+    enriched: list[dict] = []
     try:
         for e in events:
+            filing = (
+                _file_vision_complaint(db, e)
+                if is_reportable(e.get("event_type", ""))
+                else {}
+            )
             db.merge(VisionEventModel(
                 event_id=e["event_id"],
                 site_id=e["site_id"],
@@ -265,15 +448,27 @@ def _persist_vision_events(events: list[dict]) -> None:
                 inference=e["inference"],
                 sif_relevance=e["sif_relevance"],
                 lsr_tag=e["lsr_tag"],
+                hazard_class=e.get("hazard_class"),
+                regions=e.get("regions") or [],
                 status=e["status"],
                 acknowledged_by=e.get("acknowledged_by"),
                 acknowledged_at=e.get("acknowledged_at"),
                 timestamp=e["timestamp"],
+                auto_report_id=filing.get("auto_report_id"),
+                auto_report_priority=filing.get("auto_report_priority"),
+                auto_report_bucket=filing.get("auto_report_bucket"),
+                auto_report_sif=filing.get("auto_report_sif"),
+                auto_report_error=filing.get("auto_report_error"),
             ))
+            enriched.append({**e, **filing})
         db.commit()
+        return enriched
     except Exception as exc:
         db.rollback()
         print(f"Vision event persistence failed: {exc}")
+        # The event still goes back to the caller so the live console shows
+        # the hazard even when the database write failed.
+        return [{**e, "auto_report_error": f"persistence failed: {exc}"} for e in events]
     finally:
         db.close()
 
@@ -690,6 +885,9 @@ def list_reports(
             sif_potential=r.sif_potential,
             bucket=Bucket(r.bucket),
             lsr_tag=r.lsr_tag,
+            source=Source(r.source) if r.source in Source._value2member_map_ else Source.synthetic,
+            priority=(r.classification or {}).get("priority"),
+            auto_filed=bool((r.classification or {}).get("auto_filed")),
         )
         for r in records
     ]
@@ -795,6 +993,24 @@ def get_report_detail(
                 )
                 if isinstance(step, dict) and {"step", "label", "detail"} <= set(step)
             ],
+            # Only spoken reports carry this; None for everything else.
+            voice_provenance=(
+                VoiceProvenance(**clf["voice_provenance"])
+                if isinstance(clf.get("voice_provenance"), dict)
+                else None
+            ),
+            # Only CCTV-filed reports carry these; None for everything else.
+            auto_filed=clf.get("auto_filed"),
+            priority=clf.get("priority"),
+            priority_label=clf.get("priority_label"),
+            priority_rationale=clf.get("priority_rationale"),
+            recommended_action=clf.get("recommended_action"),
+            vision_event_id=clf.get("vision_event_id"),
+            vision_event_type=clf.get("vision_event_type"),
+            vision_severity=clf.get("vision_severity"),
+            vision_confidence=clf.get("vision_confidence"),
+            vision_camera_id=clf.get("vision_camera_id"),
+            vision_camera_name=clf.get("vision_camera_name"),
         ),
         review_status=record.review_status,
         reasoning=reasoning_data,
@@ -1197,6 +1413,9 @@ def get_review_queue(
             sif_potential=r.sif_potential,
             bucket=Bucket(r.bucket),
             lsr_tag=r.lsr_tag,
+            source=Source(r.source) if r.source in Source._value2member_map_ else Source.synthetic,
+            priority=(r.classification or {}).get("priority"),
+            auto_filed=bool((r.classification or {}).get("auto_filed")),
         )
         for r in records
     ]
@@ -1677,7 +1896,7 @@ def me(user: tuple[str, Role] = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
-# 8. Live Safety Vision
+# 8. Camera Watch — CCTV hazard monitoring
 #
 # Real-time computer-vision safety monitoring, layered on top of the same
 # FastAPI app and PostgreSQL database as the report-analysis pipeline — not a
@@ -1693,6 +1912,24 @@ VISION_DEMO_NOTICE = (
     "Demo Camera Feed — a browser webcam or an uploaded/local demo video, "
     "processed live by YOLO. This is not a live OIL India camera feed."
 )
+
+
+def _vision_signals(raw: Optional[dict]) -> VisionSignals:
+    """Convert the analyzer signal dict into its response model.
+
+    Tolerant by design: the analyzer can legitimately return {} before the
+    first frame of a session, and a signal added there later must not 500 a
+    console that has not been redeployed yet.
+    """
+    if not raw:
+        return VisionSignals()
+    known = set(VisionSignals.model_fields.keys()) - {"regions"}
+    payload = {k: v for k, v in raw.items() if k in known}
+    payload["regions"] = [VisionRegion(**r) for r in (raw.get("regions") or [])]
+    try:
+        return VisionSignals(**payload)
+    except Exception:
+        return VisionSignals()
 
 
 def _vision_event_from_dict(e: dict) -> VisionSafetyEvent:
@@ -1712,9 +1949,18 @@ def _vision_event_from_dict(e: dict) -> VisionSafetyEvent:
         inference=e["inference"],
         sif_relevance=e["sif_relevance"],
         lsr_tag=e["lsr_tag"],
+        hazard_class=e.get("hazard_class") or "scene",
+        regions=[VisionRegion(**r) for r in (e.get("regions") or [])],
         status=e.get("status", "active"),
         acknowledged_by=e.get("acknowledged_by"),
         acknowledged_at=e.get("acknowledged_at"),
+        auto_report_id=e.get("auto_report_id"),
+        auto_report_priority=e.get("auto_report_priority"),
+        auto_report_priority_label=e.get("auto_report_priority_label")
+        or PRIORITY_LABELS.get(e.get("auto_report_priority") or ""),
+        auto_report_bucket=e.get("auto_report_bucket"),
+        auto_report_sif=e.get("auto_report_sif"),
+        auto_report_error=e.get("auto_report_error"),
     )
 
 
@@ -1735,9 +1981,17 @@ def _vision_event_from_row(r: "VisionEventModel") -> VisionSafetyEvent:
         inference=r.inference,
         sif_relevance=r.sif_relevance,
         lsr_tag=r.lsr_tag,
+        hazard_class=r.hazard_class or "scene",
+        regions=[VisionRegion(**reg) for reg in (r.regions or [])],
         status=r.status,
         acknowledged_by=r.acknowledged_by,
         acknowledged_at=r.acknowledged_at,
+        auto_report_id=r.auto_report_id,
+        auto_report_priority=r.auto_report_priority,
+        auto_report_priority_label=PRIORITY_LABELS.get(r.auto_report_priority or ""),
+        auto_report_bucket=r.auto_report_bucket,
+        auto_report_sif=r.auto_report_sif,
+        auto_report_error=r.auto_report_error,
     )
 
 
@@ -1824,6 +2078,7 @@ def analyze_vision_frame(
             new_events=[],
             model_name=info["model_name"],
             device=info["device"],
+            signals=_vision_signals(info.get("signals")),
             skipped=True,
         )
 
@@ -1837,6 +2092,8 @@ def analyze_vision_frame(
         new_events=[_vision_event_from_dict(e) for e in result["new_events"]],
         model_name=result["model_name"],
         device=result["device"],
+        signals=_vision_signals(result.get("signals")),
+        latency_ms=float(result.get("latency_ms") or 0.0),
     )
 
 
@@ -1859,7 +2116,18 @@ def get_vision_status(
         .filter(
             VisionEventModel.camera_id == camera_id,
             VisionEventModel.status == "active",
-            VisionEventModel.severity == "high",
+            # "critical" was added after the first release; an event logged
+            # before that is still high, so both count as high priority.
+            VisionEventModel.severity.in_(("critical", "high")),
+        )
+        .scalar()
+        or 0
+    )
+    auto_reports = (
+        db.query(func.count(VisionEventModel.event_id))
+        .filter(
+            VisionEventModel.camera_id == camera_id,
+            VisionEventModel.auto_report_id.isnot(None),
         )
         .scalar()
         or 0
@@ -1873,11 +2141,15 @@ def get_vision_status(
         vehicle_count=info.get("vehicle_count", 0),
         active_hazards=int(active_hazards),
         high_priority_hazards=int(high_priority),
+        auto_reports_filed=int(auto_reports),
+        frames_processed=int(info.get("frames_processed", 0)),
+        events_raised=int(info.get("events_raised", 0)),
         model_name=info["model_name"],
         device=info["device"],
         model_ready=info["model_ready"],
         model_error=info["model_error"],
         last_frame_at=info.get("last_frame_at"),
+        signals=_vision_signals(info.get("signals")),
         demo_notice=VISION_DEMO_NOTICE,
     )
 
@@ -1921,6 +2193,101 @@ def acknowledge_vision_event(
     row.acknowledged_at = _now()
     db.commit()
     return _vision_event_from_row(row)
+
+
+# ---------------------------------------------------------------------------
+# Voice reports — ESP32 voice node
+#
+# A worker speaks into a field device; a bridge on the laptop transcribes the
+# clip locally and posts the transcript here. This endpoint deliberately runs
+# the SAME run_single() Stage 0-3 path as /reports/submit rather than a parallel
+# "voice pipeline". A spoken hazard report is a hazard report: it earns its
+# priority bucket on the same evidence and the same reasoning as a typed one,
+# and lands in the same review queue. A second classifier tuned for speech would
+# mean two different definitions of SIF potential in one system.
+# ---------------------------------------------------------------------------
+@app.post("/api/v1/voice/ingest", response_model=VoiceReportIngestResponse, status_code=201, tags=["voice"])
+def ingest_voice_report(
+    payload: VoiceReportIngestRequest,
+    user: tuple[str, Role] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    username, _role = user
+    report_id = _new_id("voc")
+
+    transcript = (payload.transcript or "").strip()
+    result = run_single(report_id, transcript, site=payload.site)
+    clf = dict(result["classification"])
+    ext = result["extracted_fields"]
+
+    steps = (result.get("reasoning") or {}).get("reasoning_steps") or []
+    if steps:
+        clf["reasoning_chain"] = steps
+
+    # Speech provenance rides with the classification so the console can show a
+    # reviewer that these words came from a recogniser. Kept separate from the
+    # SIF confidence on purpose - "we may have misheard this" and "this may not
+    # be a precursor" are different doubts and collapsing them would be wrong.
+    clf["voice_provenance"] = {
+        "device_id": payload.device_id,
+        "asr_model": payload.asr_model,
+        "asr_confidence": payload.asr_confidence,
+        "asr_language": payload.asr_language,
+        "audio_seconds": payload.audio_seconds,
+        "clip_id": payload.clip_id,
+        "transcript_is_machine_generated": True,
+    }
+
+    def _label(field: str):
+        node = ext.get(field)
+        if isinstance(node, dict):
+            return node.get("label") or node.get("text")
+        return node
+
+    energy_type = _label("energy_type")
+    observed = payload.captured_at or _now()
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+
+    record = ReportModel(
+        report_id=report_id,
+        site=payload.site,
+        timestamp=observed,
+        # Its own source value, not "real". The console chips this, so a spoken
+        # report is visibly distinguishable from one a person typed and checked.
+        source="voice",
+        report_text=transcript,
+        sif_potential=bool(clf.get("sif_potential", False)),
+        bucket=str(clf.get("bucket", "HIGH_CONF_NON_SIF")),
+        lsr_tag=str(clf.get("lsr_tag") or "N/A"),
+        extracted_fields=ext,
+        classification=clf,
+        model_version=str(clf.get("model_version", "sentinel-v2.0")),
+        review_status="pending",
+        batch_id=None,
+        activity=_label("activity"),
+        energy_type=energy_type,
+        barrier_type=_energy_to_barrier(energy_type),
+        barrier_status=_label("barrier_status"),
+        exposure=_label("exposure"),
+        magnitude_class=_magnitude(energy_type),
+        confidence=float(clf.get("confidence") or 0.0),
+        is_high_energy=bool(_is_high_energy(energy_type)),
+        reporter_role=payload.reporter_role or f"voice-node:{payload.device_id}",
+    )
+    db.add(record)
+    _audit(db, "report", report_id, "voice_ingested", username)
+    db.commit()
+
+    return VoiceReportIngestResponse(
+        report_id=report_id,
+        bucket=record.bucket,
+        sif_potential=bool(record.sif_potential),
+        confidence=float(record.confidence or 0.0),
+        lsr_tag=record.lsr_tag,
+        site=record.site,
+        transcript=transcript,
+    )
 
 
 # ---------------------------------------------------------------------------

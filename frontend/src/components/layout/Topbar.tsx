@@ -80,7 +80,7 @@ function AlertTicker() {
  * Site selector.
  *
  * The demo now spans three real OIL India locations. Switching here drives
- * Live Safety Vision's camera list directly; other screens keep their own
+ * the Camera Watch camera list directly; other screens keep their own
  * independent site filters (which cover the full registry, not just these
  * three) so this selector never silently narrows data someone didn't ask to
  * filter.
@@ -89,7 +89,7 @@ function SiteSelector() {
   const { selectedSite, setSelectedSiteId, sites } = useSelectedSite();
   return (
     <Hint
-      content="Active OIL India site for this demo. Drives the camera list on Live Safety Vision."
+      content="Active OIL India site for this demo. Drives the camera list on Camera Watch."
       side="bottom"
     >
       <div className="flex items-center gap-1.5 rounded-sm border border-line-bright px-2 py-1 text-ink-2">

@@ -27,7 +27,7 @@ exactly the reports the problem statement asks us to surface.
 | Intervention engine (curated control library, hierarchy of controls) | Built |
 | FastAPI backend + PostgreSQL, 30+ endpoints | Built |
 | React console, 15 screens, all on live API data | Built |
-| Live Safety Vision — real-time YOLO object detection + ROI hazard rules, 3-site demo | Built (see below) |
+| Camera Watch — CCTV fire / smoke / fall / roof-fall detection that files its own prioritised complaints | Built (see below) |
 
 **Not built, deliberately:** OIL system integration, an authorized live OIL camera
 feed, production user management, human/organisational-factor causal inference,
@@ -132,48 +132,111 @@ uses relative URLs, the shared link works with no rebuild and no CORS setup.
 
 ---
 
-## Live Safety Vision
+## Camera Watch — CCTV hazard monitoring
 
-Real-time computer-vision safety monitoring, added alongside the report-analysis
+Real-time computer-vision hazard monitoring, alongside the report-analysis
 pipeline above — same backend, same database, same console. It answers a
 different question than the NLP side: not "what does this written report imply",
-but "what does the camera literally see, right now, and does that match a
-configured hazard scenario".
+but "what is this camera seeing right now, is it the start of a disaster, and
+who needs to be told".
 
-**What it does.** A person selects a site (Duliajan, Digboi or Moran — see below)
-and a demo camera, then a video source: a browser webcam, or an uploaded/local MP4.
-Frames are analyzed continuously by [Ultralytics YOLO](https://docs.ultralytics.com/)
-(`yolov8n`, CPU by default, CUDA automatically if available) run through OpenCV.
-Detected people and vehicles are checked against per-camera configurable safety
-zones (Restricted Zone, Lifting Exclusion Zone, Vehicle Lane) and a proximity rule,
-producing structured safety events — never a bare "hazard detected".
+**A camera that only lights up a tile has not helped anyone.** So the defining
+behaviour of this feature is that a detected hazard **files its own complaint**:
+the event is written into a plain-language field report, run through the same
+Stage 0–3 SIF pipeline as a report a person typed, given a response priority,
+and pushed into the normal review queue. One camera sighting produces one real,
+auditable, prioritised report — with no human in the loop at write time.
 
-**Observation vs. inference, kept separate on purpose.** Every event states what was
-literally seen ("Person detected inside configured 'Restricted Zone' ...") and,
-separately, the safety interpretation a human still has to confirm ("Potential
-exposure to a hazardous area...", tagged `Requires HSE review`). A camera cannot
-verify isolation status, permits, or intent — it can only report an object in a
-zone, and Sentinel does not pretend otherwise.
+### What it detects
 
-**PPE detection is not implemented.** The pretrained COCO-class YOLO model used
-here cannot recognize helmets or vests, and hallucinating that capability would
-undermine the honesty the rest of this project is built on. The hazard-rule layer
-(`aiml/src/sif_engine/vision/hazard_rules.py`) is structured so a dedicated PPE
-model could be plugged in later without restructuring it.
+A COCO-pretrained YOLO model recognises people, vehicles and everyday objects.
+It cannot see any of the things that actually precede a mine or field disaster —
+none of them are COCO classes. So detection here is two layers, not one:
+
+| Layer | Sees | Hazards raised |
+|---|---|---|
+| YOLO detector | people, vehicles, plant, loose objects | restricted-zone entry, lifting-zone entry, vehicle–person proximity |
+| Scene analysers (`scene_analysis.py`) | how the *scene* is changing over time | fire, smoke, visibility loss, worker fall, worker down and immobile, falling object / roof fall, struck-by, sudden evacuation or crowding |
+
+Each scene analyser is classical CV over a short rolling history per camera:
+
+- **Fire** — flame-colour mask intersected with *churn*: how much the mask
+  changes once its bulk translation is cancelled out. A static orange object
+  (painted plant, sodium lamp) churns ~0; a moving tan one (a face, a hi-vis
+  jacket) churns 0.03–0.09 after alignment; a live flame churns 0.3–0.6. The
+  largest connected component must also account for a real share of the lit
+  pixels, which is what rejects compression speckle on a rock face.
+- **Smoke** — grey, moving and *blurrier than the rest of the frame*. Seeded
+  from background-subtractor motion (not from greyness — underground, nearly
+  every pixel is grey), closed to bridge the churning rim into the body of the
+  plume, then each component gated on texture. Detected people and vehicles are
+  cut out first, so a worker in a grey overall is not a plume.
+- **Visibility loss** — scene edge energy against that camera's own rolling
+  baseline. Catches a dust cloud, a gas release or a smoke layer without needing
+  to know which it is, and without firing on a scene that was simply always
+  low-contrast.
+- **Fall / worker down** — tracked person boxes going from upright to horizontal
+  with downward velocity, escalating to a man-down event if the person then
+  stops moving.
+- **Falling object / roof fall** — masses descending under gravity, from YOLO
+  boxes where the object has a name and from motion blobs where it does not (a
+  rock, a section of roof, a length of pipe). Escalates to **struck-by** when the
+  mass reaches a person, with a deliberately lower speed bar for that case.
+
+### Tuned to over-report, never to miss
+
+The operating rule for this feature is explicit: **a false alarm is acceptable,
+a missed disaster is not.** That shows up in concrete places, not just in prose —
+low detector confidence threshold, weak-evidence events still raised (carrying a
+low confidence and a hedged "possible …" reading), a lower descent threshold
+when a person is underneath, and every hazard family on the auto-report list. If
+complaint filing itself fails, the event is still recorded and carries the
+reason — losing a sighting because the paperwork failed would be the worst
+outcome available.
+
+### Priority: the stronger of two independent assessments
+
+The camera judges severity from pixels. The SIF text pipeline judges the written
+complaint from language. **Priority is the maximum of the two, never the
+average**, and the report records which one set it:
+
+> Priority set by the camera assessment (critical severity, 85% detection
+> confidence); the text pipeline alone would have routed this as P4.
+
+That arithmetic exists to prevent one specific failure: a text classifier that
+confidently reads a generated narrative as non-SIF must not be able to route a
+detected fire to a routine log entry. P1 = immediate response, P2 = urgent
+review, P3 = elevated, P4 = routine.
+
+### Observation vs. inference, kept separate
+
+Every event states what was literally seen ("A flickering flame-coloured source
+was detected in the camera view") and, separately, the interpretation a human
+still has to confirm ("Probable open flame / active fire…"). Generated reports
+end with an explicit line saying they were machine-written and unconfirmed, and
+are stored with `source = "vision"` so they are never mistaken for something a
+person filed.
+
+**PPE detection is not implemented.** The pretrained model cannot recognise
+helmets or vests, and claiming otherwise would undermine the honesty the rest of
+this project is built on. The rule layer is structured so a dedicated PPE model
+could be added later without restructuring it.
 
 **This is decision support, not autonomous safety control.** Nothing here stops
-equipment, sounds a physical alarm, or acts without a human — it surfaces events
-for an HSE reviewer to act on.
+equipment, sounds a physical alarm, or acts without a human.
 
 ### Three real OIL India sites
 
-The demo now spans three real OIL India operational locations — Duliajan, Digboi,
-and Moran, Assam — with two demo cameras each (`DUL-C01/C02`, `DIG-C01/C02`,
-`MOR-C01/C02`). **Only the site names and coordinates are real.** Camera IDs, ROI
-zones, and every event are synthetic/demo data, generated live by this
-prototype's own model — never a claim of installed OIL India CCTV infrastructure
-or an authorized live feed. The console's site selector (top bar) switches the
-active site; Live Safety Vision's camera list follows it directly.
+The demo spans three real OIL India operational locations — Duliajan, Digboi and
+Moran, Assam — with two demo cameras each (`DUL-C01/C02`, `DIG-C01/C02`,
+`MOR-C01/C02`). **Only the site names and coordinates are real.** Camera IDs,
+safety zones and every event are demo data generated live by this prototype —
+never a claim of installed OIL India CCTV infrastructure or an authorised feed.
+
+Zone membership is tested at a person's **ground point** (bottom-centre of the
+box), not the box centre. Using the centre makes anyone standing in front of a
+zone drawn on a far wall register as inside it, which is the single largest
+source of false zone alarms in a naive implementation.
 
 ### Running it
 
@@ -181,44 +244,64 @@ active site; Live Safety Vision's camera list follows it directly.
 pip install -r aiml/requirements.txt   # adds ultralytics, opencv-python, torch
 ```
 
-The first run downloads the ~6 MB `yolov8n.pt` weights from Ultralytics'
-release assets (cached under `aiml/models/vision/` — not committed, same
-policy as the NER weights below) — needs a one-time internet connection.
-Then:
+The first run downloads the ~6 MB `yolov8n.pt` weights from Ultralytics' release
+assets (cached under `aiml/models/vision/` — not committed, same policy as the
+NER weights below), so it needs a one-time internet connection. The model is
+loaded and warmed at API startup on a background thread, so the first live frame
+does not pay for it. Then:
 
 ```bash
 uvicorn backend.main:app --reload --port 8000
 cd frontend && npm run dev
 ```
 
-Open the console → **Live Safety Vision** in the sidebar → pick **Webcam** (grants
-camera permission) or **Demo Video** (choose any local MP4 with people/vehicles in
-it) → **Start**. Bounding boxes, confidence, and the configured zones draw over
-the video; a person entering a zone produces a real event in the panel on the
-right within a couple of frames.
+Open the console → **Camera Watch** in the sidebar → choose a source:
 
-If no GPU is available, inference runs on CPU automatically — the active
-device (`CPU`/`CUDA`) is shown directly on the video panel and in
-`GET /api/v1/vision/status`.
+- **Upload Video** — any video file with the scene you want to test. Frames are
+  read in the browser and analysed on the same path as a live camera.
+- **Live Webcam** — grants camera permission and analyses the live feed. This is
+  the one to use for the burning-paper demo: light a piece of paper in front of
+  the lens and the fire index climbs, the flame is boxed, a critical event fires
+  and a P1 complaint appears in the queue within about a second.
+- **RTSP / NVR** — points the backend directly at an IP camera or NVR; frames
+  are then read and analysed server-side.
+
+Measured on CPU: ~40 ms per frame end to end, ~3 fps sustained through the
+browser loop, fire raised **0.7 s after ignition** in the reference clip.
+
+The console shows the live per-frame hazard indices, so an operator watches a
+number climb *before* anything fires rather than only seeing the alarm
+afterwards. Inference runs on CUDA automatically when available; the active
+device is shown on the video panel and in `GET /api/v1/vision/status`.
+
+Tuning without code changes: `SENTINEL_VISION_WEIGHTS`, `SENTINEL_VISION_CONF`
+and `SENTINEL_VISION_IMGSZ`.
 
 ### API
 
 ```
-GET  /api/v1/vision/cameras         demo camera + ROI config, optionally by site
-POST /api/v1/vision/start           mark a camera session active
+GET  /api/v1/vision/cameras         camera + safety-zone config, optionally by site
+POST /api/v1/vision/start           begin a camera session (resets per-camera analyser state)
 POST /api/v1/vision/stop            end a camera session
-POST /api/v1/vision/analyze-frame   one frame in → detections + new events out
-GET  /api/v1/vision/status          live counts, active/high-priority hazards, device
-GET  /api/v1/vision/events          persisted safety events, filterable by site/camera/status
+POST /api/v1/vision/analyze-frame   one frame in → detections + hazard indices + new events
+                                    (each carrying the complaint it just filed) out
+GET  /api/v1/vision/status          live counts, hazard totals, reports filed, indices, device
+GET  /api/v1/vision/events          persisted hazard events, filterable by site/camera/status
 POST /api/v1/vision/events/{id}/acknowledge
+GET  /api/v1/reports?source=vision  the complaints the cameras filed
 ```
 
-`analyze-frame` is the core loop: the frontend calls it on a throttled timer
-(webcam capture or a playing demo-video element feed the same path), and the
-backend also enforces its own minimum interval per camera so a bursty caller
-cannot overload the model. Events are persisted to PostgreSQL
-(`vision_events` table) the same way everything else in Sentinel is — there is
-no separate app or database for this feature.
+`analyze-frame` is the core loop. The frontend chains each capture off the
+previous response rather than using a fixed interval — with an interval, a frame
+slower than the tick stacks the next request on top of it and the backlog only
+grows. The backend independently enforces a minimum interval per camera, and
+serialises model inference, because FastAPI runs sync endpoints in a thread pool
+and an Ultralytics model is not safe to call re-entrantly.
+
+Events and generated reports are persisted to PostgreSQL (`vision_events` and
+`reports`) the same way everything else in Sentinel is — there is no separate app
+or database for this feature. New columns on `vision_events` are applied by an
+additive migration at startup, so an existing database upgrades in place.
 
 ---
 
@@ -311,7 +394,7 @@ aiml/
     patterns/                   Stage 4 — clustering, association mining, SPC
     recommendation/             curated intervention library + evidence trail
     site_intelligence/          site registry and analytics
-    vision/                     Live Safety Vision — YOLO detector, ROI hazard rules,
+    vision/                     Camera Watch — YOLO detector, scene analysers, hazard rules,
                                  frame-processing session manager, event schema
   scripts/                      generate / train / probe / evaluate entry points
   reports/                      evaluation report, metrics.json, OOD probe
@@ -325,7 +408,7 @@ frontend/
   src/api/                      typed client + React Query hooks (no mock fallback)
   src/components/kinetic/       motion primitives
   src/lib/siteContext.tsx       global 3-site selector (Duliajan/Digboi/Moran)
-  src/pages/                    15 screens, incl. LiveVisionPage.tsx
+  src/pages/                    15 screens, incl. LiveVisionPage.tsx (Camera Watch)
 ```
 
 ## Testing
@@ -335,8 +418,23 @@ TEST_ISOLATED_SQLITE=1 DATABASE_URL="sqlite:///:memory:" python -m pytest backen
 cd aiml && python -m pytest tests -q
 ```
 
-`backend/tests/test_vision_api.py` and `aiml/tests/test_vision.py` cover Live
-Safety Vision specifically (detector init, ROI/proximity rules, event schema,
-the three-site camera registry, and the API/DB round trip). The model-inference
-boundary (`YoloDetector.detect`) is mocked in the deterministic hazard-rule API
-test — nothing else about the feature is mocked away.
+Camera Watch is covered by three files:
+
+- `aiml/tests/test_vision.py` — detector wrapper, zone and proximity rules,
+  event schema, the three-site camera registry.
+- `aiml/tests/test_vision_scene.py` — the scene analysers and the complaint
+  chain. Every detector is tested against its own worst case as well as its
+  happy path: a flickering flame **and** a static orange object, a diffuse plume
+  **and** a uniformly grey static scene, a fall **and** someone standing still,
+  a mass falling onto a worker **and** flame churn that must not read as one.
+  Temporal signals are exercised against a real clock, because a version of
+  these tests that passed on a single frame would not be testing the thing that
+  makes the detector work.
+- `backend/tests/test_vision_api.py` — the API and database round trip, that a
+  hazard event files a real prioritised report, and that the event survives a
+  failure to file it.
+
+The model-inference boundary (`YoloDetector.detect`) is mocked only in the
+deterministic hazard-rule API tests — the scene analysers, the rule layer, the
+complaint drafting, the priority arithmetic and the persistence path all run for
+real.
