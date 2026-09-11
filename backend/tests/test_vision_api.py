@@ -1,4 +1,4 @@
-"""Live Safety Vision — backend API integration tests.
+"""Camera Watch — backend API integration tests.
 
 Mirrors backend/tests/test_api.py's setup (isolated SQLite unless
 DATABASE_URL is set, same demo auth). Only the model-inference boundary is
@@ -204,3 +204,166 @@ def test_existing_report_pipeline_unaffected_by_vision_module(client, auth_heade
     assert res2.status_code == 200
     site_ids = {s["site_id"] for s in res2.json()["sites"]}
     assert {"duliajan", "digboi", "moran"} <= site_ids
+
+
+# ---------------------------------------------------------------------------
+# Automatic complaint filing
+#
+# The point of detecting a hazard is that it gets FILED. These tests cover the
+# join between the camera and the report pipeline: a hazard event must produce
+# a real report in the same queue as a human-written one, carrying a priority
+# that no downstream component can quietly drop.
+# ---------------------------------------------------------------------------
+def test_hazard_event_files_a_real_report_with_a_priority(client, auth_headers, monkeypatch):
+    manager = get_manager()
+    detector = manager._get_detector()  # noqa: SLF001 - shared singleton, test needs to patch it
+    person = DetectedObject("person", 0.93, (0.65, 0.2, 0.75, 0.4))
+    monkeypatch.setattr(detector, "detect", lambda frame: [person])
+
+    client.post(
+        "/api/v1/vision/start",
+        json={"site_id": "digboi", "camera_id": "DIG-C02", "source_type": "demo_video"},
+        headers=auth_headers,
+    )
+    res = client.post(
+        "/api/v1/vision/analyze-frame",
+        json={"site_id": "digboi", "camera_id": "DIG-C02", "image_base64": _tiny_frame_base64()},
+        headers=auth_headers,
+    )
+    assert res.status_code == 200
+    events = res.json()["new_events"]
+    assert events, "a person standing in a restricted zone must raise an event"
+    event = events[0]
+
+    # The response that raised the alarm already carries the filed complaint,
+    # so a console does not have to poll to find out what happened to it.
+    assert event["auto_report_id"], f"no report filed: {event.get('auto_report_error')}"
+    assert event["auto_report_error"] is None
+    assert event["auto_report_priority"] in ("P1", "P2", "P3", "P4")
+    assert event["auto_report_priority_label"]
+
+    # And it is a real report: same endpoint, same shape as a typed one.
+    detail = client.get(f"/api/v1/reports/{event['auto_report_id']}", headers=auth_headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["source"] == "vision"
+    assert body["review_status"] == "pending", "nothing auto-closes without a human"
+    clf = body["classification"]
+    assert clf["auto_filed"] is True
+    assert clf["priority"] == event["auto_report_priority"]
+    assert clf["priority_rationale"], "an operator must be able to see why"
+    assert clf["vision_event_id"] == event["event_id"]
+    assert clf["recommended_action"]
+
+    # The narrative is prose a reviewer can read, and it does not pretend a
+    # person confirmed anything.
+    assert len(body["report_text"].split()) > 40
+    assert "not yet been confirmed" in body["report_text"].lower()
+
+    client.post("/api/v1/vision/stop", json={"camera_id": "DIG-C02"}, headers=auth_headers)
+
+
+def test_auto_filed_reports_are_listable_and_labelled_as_machine_filed(client, auth_headers, monkeypatch):
+    manager = get_manager()
+    detector = manager._get_detector()  # noqa: SLF001
+    monkeypatch.setattr(
+        detector, "detect", lambda frame: [DetectedObject("person", 0.9, (0.65, 0.2, 0.75, 0.4))]
+    )
+    client.post(
+        "/api/v1/vision/start",
+        json={"site_id": "moran", "camera_id": "MOR-C02", "source_type": "webcam"},
+        headers=auth_headers,
+    )
+    client.post(
+        "/api/v1/vision/analyze-frame",
+        json={"site_id": "moran", "camera_id": "MOR-C02", "image_base64": _tiny_frame_base64()},
+        headers=auth_headers,
+    )
+
+    listing = client.get("/api/v1/reports", params={"source": "vision", "limit": 50}, headers=auth_headers)
+    assert listing.status_code == 200
+    items = listing.json()["items"]
+    assert items, "auto-filed reports must be reachable through the normal reports list"
+    for item in items:
+        assert item["source"] == "vision"
+        assert item["auto_filed"] is True
+        assert item["priority"]
+
+    client.post("/api/v1/vision/stop", json={"camera_id": "MOR-C02"}, headers=auth_headers)
+
+
+def test_event_survives_a_failure_to_file_its_report(client, auth_headers, monkeypatch):
+    """Losing the sighting because the paperwork failed is the worst outcome.
+
+    If complaint drafting or the SIF pipeline raises, the hazard event must
+    still reach the console and the database, carrying the reason the filing
+    failed rather than disappearing.
+    """
+    import backend.main as backend_main
+
+    manager = get_manager()
+    detector = manager._get_detector()  # noqa: SLF001
+    monkeypatch.setattr(
+        detector, "detect", lambda frame: [DetectedObject("person", 0.9, (0.65, 0.2, 0.75, 0.4))]
+    )
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("simulated pipeline outage")
+
+    monkeypatch.setattr(backend_main, "build_complaint", _explode)
+
+    client.post(
+        "/api/v1/vision/start",
+        json={"site_id": "duliajan", "camera_id": "DUL-C02", "source_type": "webcam"},
+        headers=auth_headers,
+    )
+    res = client.post(
+        "/api/v1/vision/analyze-frame",
+        json={"site_id": "duliajan", "camera_id": "DUL-C02", "image_base64": _tiny_frame_base64()},
+        headers=auth_headers,
+    )
+    assert res.status_code == 200
+    events = res.json()["new_events"]
+    assert events, "the hazard event must survive a reporting failure"
+    assert events[0]["auto_report_id"] is None
+    assert "simulated pipeline outage" in (events[0]["auto_report_error"] or "")
+
+    stored = client.get(
+        "/api/v1/vision/events", params={"camera_id": "DUL-C02"}, headers=auth_headers
+    ).json()["events"]
+    assert any(e["event_id"] == events[0]["event_id"] for e in stored)
+
+    client.post("/api/v1/vision/stop", json={"camera_id": "DUL-C02"}, headers=auth_headers)
+
+
+def test_analyze_frame_reports_live_scene_signals(client, auth_headers, monkeypatch):
+    """The console renders a rising hazard index before anything fires, so the
+    per-frame signal block is part of the API contract, not a debug extra."""
+    manager = get_manager()
+    detector = manager._get_detector()  # noqa: SLF001
+    monkeypatch.setattr(detector, "detect", lambda frame: [])
+
+    client.post(
+        "/api/v1/vision/start",
+        json={"site_id": "digboi", "camera_id": "DIG-C01", "source_type": "webcam"},
+        headers=auth_headers,
+    )
+    res = client.post(
+        "/api/v1/vision/analyze-frame",
+        json={"site_id": "digboi", "camera_id": "DIG-C01", "image_base64": _tiny_frame_base64()},
+        headers=auth_headers,
+    )
+    assert res.status_code == 200
+    signals = res.json()["signals"]
+    for key in ("fire_score", "smoke_score", "motion_score", "visibility", "visibility_drop"):
+        assert key in signals
+        assert 0.0 <= signals[key] <= 1.0
+    assert res.json()["latency_ms"] > 0
+
+    status = client.get(
+        "/api/v1/vision/status", params={"camera_id": "DIG-C01"}, headers=auth_headers
+    ).json()
+    assert "signals" in status
+    assert status["frames_processed"] >= 1
+
+    client.post("/api/v1/vision/stop", json={"camera_id": "DIG-C01"}, headers=auth_headers)

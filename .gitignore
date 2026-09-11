@@ -11,3 +11,7 @@ venv/
 # Local verification artefacts
 scratch_*.db
 *.db-journal
+# Ultralytics caches the pretrained detector weights into the working
+# directory on first run. Same policy as aiml/models/vision/ - a 6 MB
+# binary that every clone can fetch for itself.
+*.pt

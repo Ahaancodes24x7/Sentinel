@@ -1,27 +1,37 @@
-"""Continuous frame-processing pipeline for Live Safety Vision.
+"""Continuous frame-processing pipeline for CCTV hazard monitoring.
 
 Owns the parts that make this "video", not "one classifier call":
-  - the single lazily-loaded YOLO model, shared by every camera session
+
+  - the single lazily-loaded YOLO model, shared by every camera
+  - a per-camera SceneAnalyzer holding the temporal state that fire flicker,
+    smoke growth, fall posture and falling-mass tracking all depend on
   - per-camera session state (active flag, rolling counts, dedupe cooldowns)
   - an optional background thread for a directly-opened source (RTSP or a
     server-local file), bounded so it cannot grow memory without limit and
     stoppable on demand
 
-The browser-driven paths (webcam capture, an uploaded/local demo MP4 played
-in the page) do NOT use the background thread - the frontend calls
+The browser-driven paths (webcam capture, an uploaded video played in the
+page) do NOT use the background thread - the frontend calls
 POST /vision/analyze-frame on its own throttled timer, and `process_frame()`
-below is the single entry point both paths go through, so detection + rule
-logic is never duplicated between them.
+below is the single entry point every path goes through, so detection, scene
+analysis and rule logic are never duplicated between them.
+
+Per-camera analyzer state is the reason `start()` resets rather than reuses a
+session: temporal signals computed across a source switch (webcam frame
+followed by a video frame) are meaningless, and a background model built from
+one scene would mark the whole of the next scene as motion.
 
 This module has no database dependency by design (matching the rest of the
-aiml package). Durable persistence of generated events is the backend's job:
-`VisionSessionManager.set_event_sink()` lets backend/main.py register a
-callback that writes new events to the database, without this module having
-to import backend code.
+aiml package). Durable persistence of generated events, and filing them as
+complaints, is the backend's job: `VisionSessionManager.set_event_sink()`
+lets backend/main.py register a callback that both writes events and runs the
+auto-report pipeline, without this module importing backend code.
 """
 from __future__ import annotations
 
 import base64
+import binascii
+import logging
 import threading
 import time
 import uuid
@@ -34,13 +44,24 @@ import numpy as np
 
 from . import camera_registry, hazard_rules
 from .detector import YoloDetector
+from .scene_analysis import SceneAnalyzer
 from .schemas import FrameAnalysis, SafetyEvent
 
-# Server-side guard against a runaway/bursty caller: ~2.8 fps ceiling per
-# camera regardless of what the frontend's own timer does.
-MIN_FRAME_INTERVAL_SECONDS = 0.35
+logger = logging.getLogger(__name__)
 
-EventSink = Callable[[list[dict]], None]
+# Server-side guard against a runaway or bursty caller: ~5 fps ceiling per
+# camera regardless of what the frontend timer does. Higher than a pure
+# object detector would need, because the temporal analyzers (flicker, fall
+# posture, descent speed) get materially better with frame rate and the whole
+# per-frame cost is ~50 ms.
+MIN_FRAME_INTERVAL_SECONDS = 0.20
+
+# Frames whose largest side exceeds this are downscaled before anything runs.
+# A 4K CCTV still costs several times more to decode and infer on with no
+# detection benefit at the distances these cameras cover.
+MAX_FRAME_WIDTH = 1280
+
+EventSink = Callable[[list[dict]], list[dict]]
 
 
 def _now() -> datetime:
@@ -57,7 +78,12 @@ class CameraSession:
     vehicle_count: int = 0
     last_frame_at: Optional[datetime] = None
     last_processed_at: float = 0.0
+    frames_processed: int = 0
+    events_raised: int = 0
+    reports_filed: int = 0
     cooldowns: dict[str, float] = field(default_factory=dict)
+    analyzer: SceneAnalyzer = field(default_factory=SceneAnalyzer)
+    last_signals: dict = field(default_factory=dict)
     rtsp_worker: Optional["_BackgroundCaptureWorker"] = None
 
 
@@ -73,9 +99,11 @@ class VisionSessionManager:
     def set_event_sink(self, sink: Optional[EventSink]) -> None:
         """Register a callback invoked with every batch of newly created events.
 
-        Used by the backend to persist events to the database. Both the HTTP
-        (`analyze_frame`) and background-worker paths go through this, so
-        events are durable regardless of which source drove the frame.
+        Used by the backend to persist events and file them as complaints.
+        Both the HTTP (`analyze_frame`) and background-worker paths go through
+        this, so events are durable regardless of which source drove the
+        frame. The sink may return the same events enriched with auto-report
+        fields; whatever it returns is what the caller sees.
         """
         self._event_sink = sink
 
@@ -83,6 +111,10 @@ class VisionSessionManager:
         if self._detector is None:
             self._detector = YoloDetector.get_instance()
         return self._detector
+
+    def preload(self) -> dict:
+        """Load and warm the model ahead of the first frame."""
+        return self._get_detector().status()
 
     def _get_or_create(self, camera_id: str, site_id: str) -> CameraSession:
         with self._lock:
@@ -107,7 +139,15 @@ class VisionSessionManager:
         session.source_type = source_type
         session.people_count = 0
         session.vehicle_count = 0
+        session.frames_processed = 0
+        session.events_raised = 0
+        session.reports_filed = 0
         session.cooldowns = {}
+        session.last_signals = {}
+        # Fresh temporal state: carrying a background model or a fall track
+        # across a source change would produce alarms about the transition
+        # itself rather than about anything in the new scene.
+        session.analyzer = SceneAnalyzer()
 
         if source_type == "rtsp":
             if not rtsp_url:
@@ -131,9 +171,9 @@ class VisionSessionManager:
         """Called by a background worker thread when its capture loop ends on
         its own (source never opened, or a read failed) rather than via an
         explicit stop() - so `status()` stops reporting a session as active
-        once nothing is actually processing frames for it. Guarded by
-        identity so a worker that already lost a start/stop race can't clear
-        a newer session's state."""
+        once nothing is actually processing frames for it. Guarded by identity
+        so a worker that already lost a start/stop race cannot clear a newer
+        session's state."""
         with self._lock:
             session = self._sessions.get(camera_id)
             if session is not None and session.rtsp_worker is worker:
@@ -158,6 +198,10 @@ class VisionSessionManager:
                 "people_count": 0,
                 "vehicle_count": 0,
                 "last_frame_at": None,
+                "frames_processed": 0,
+                "events_raised": 0,
+                "reports_filed": 0,
+                "signals": {},
             })
             return base
         base.update({
@@ -167,6 +211,10 @@ class VisionSessionManager:
             "people_count": session.people_count,
             "vehicle_count": session.vehicle_count,
             "last_frame_at": session.last_frame_at,
+            "frames_processed": session.frames_processed,
+            "events_raised": session.events_raised,
+            "reports_filed": session.reports_filed,
+            "signals": session.last_signals,
         })
         return base
 
@@ -177,7 +225,7 @@ class VisionSessionManager:
         frame_bgr: np.ndarray,
         enforce_min_interval: bool = True,
     ) -> dict:
-        """Run detection + hazard rules on one frame and update session state.
+        """Detection + scene analysis + rules for one frame.
 
         `enforce_min_interval=False` lets a background worker (already
         throttled by its own capture loop) skip the extra guard meant for
@@ -189,12 +237,20 @@ class VisionSessionManager:
             return {"skipped": True}
         session.last_processed_at = now_mono
         session.last_frame_at = _now()
+        started = time.perf_counter()
+
+        frame_bgr = _downscale(frame_bgr)
 
         detector = self._get_detector()
         detections = detector.detect(frame_bgr)
+        signals = session.analyzer.analyze(frame_bgr, detections)
 
         session.people_count = sum(1 for d in detections if d.class_name == "person")
-        session.vehicle_count = sum(1 for d in detections if d.class_name in hazard_rules.VEHICLE_CLASSES)
+        session.vehicle_count = sum(
+            1 for d in detections if d.class_name in hazard_rules.VEHICLE_CLASSES
+        )
+        session.frames_processed += 1
+        session.last_signals = signals.to_dict()
 
         camera = camera_registry.get_camera(camera_id) or {
             "camera_id": camera_id,
@@ -202,14 +258,14 @@ class VisionSessionManager:
             "site_id": site_id,
             "rois": [],
         }
-        drafts = hazard_rules.evaluate(detections, camera)
+        drafts = hazard_rules.evaluate(detections, camera, signals)
 
         new_events: list[SafetyEvent] = []
         now_ts = _now()
         now_epoch = time.monotonic()
         for draft in drafts:
             last_fired = session.cooldowns.get(draft.dedupe_key, 0.0)
-            if now_epoch - last_fired < hazard_rules.EVENT_COOLDOWN_SECONDS:
+            if now_epoch - last_fired < draft.cooldown():
                 continue
             session.cooldowns[draft.dedupe_key] = now_epoch
             new_events.append(SafetyEvent(
@@ -228,7 +284,10 @@ class VisionSessionManager:
                 inference=draft.inference,
                 sif_relevance=draft.sif_relevance,
                 lsr_tag=draft.lsr_tag,
+                hazard_class=draft.hazard_class,
+                regions=draft.regions,
             ))
+        session.events_raised += len(new_events)
 
         analysis = FrameAnalysis(
             camera_id=camera_id,
@@ -240,16 +299,25 @@ class VisionSessionManager:
             new_events=new_events,
             model_name=detector.model_name,
             device=detector.device,
+            signals=session.last_signals,
         )
         result = analysis.to_dict()
+        result["latency_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
 
         if new_events and self._event_sink:
             try:
-                self._event_sink(result["new_events"])
+                enriched = self._event_sink(result["new_events"])
+                if enriched:
+                    result["new_events"] = enriched
+                    session.reports_filed += sum(
+                        1 for e in enriched if e.get("auto_report_id")
+                    )
             except Exception:
-                # Persistence failures must not break live inference - the
-                # frontend still gets its detections/overlay this frame.
-                pass
+                # Persistence or report filing must not break live inference -
+                # the frontend still gets its detections and overlay this
+                # frame, and the event is still returned, just without a
+                # linked report.
+                logger.exception("Vision event sink failed; continuing with live inference")
 
         return result
 
@@ -257,7 +325,12 @@ class VisionSessionManager:
     def decode_base64_frame(image_base64: str) -> np.ndarray:
         if image_base64.strip().startswith("data:") and "," in image_base64:
             image_base64 = image_base64.split(",", 1)[1]
-        raw = base64.b64decode(image_base64)
+        try:
+            raw = base64.b64decode(image_base64, validate=False)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError(f"Frame payload is not valid base64: {exc}") from exc
+        if not raw:
+            raise ValueError("Frame payload was empty")
         arr = np.frombuffer(raw, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
@@ -265,13 +338,23 @@ class VisionSessionManager:
         return frame
 
 
+def _downscale(frame: np.ndarray) -> np.ndarray:
+    if frame is None or frame.size == 0:
+        return frame
+    h, w = frame.shape[:2]
+    if w <= MAX_FRAME_WIDTH:
+        return frame
+    scale = MAX_FRAME_WIDTH / float(w)
+    return cv2.resize(frame, (MAX_FRAME_WIDTH, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+
+
 class _BackgroundCaptureWorker(threading.Thread):
     """Best-effort background reader for an RTSP/IP-camera or local file source.
 
     Optional path: the demo does not depend on this working, since the
-    frontend-driven webcam/upload path is the primary and reliable one. This
-    holds at most the current frame (never a growing queue) and stops
-    cleanly on `.stop()`.
+    frontend-driven webcam and upload paths are the primary and reliable ones.
+    Holds at most the current frame (never a growing queue) and stops cleanly
+    on `.stop()`.
     """
 
     def __init__(
@@ -280,7 +363,7 @@ class _BackgroundCaptureWorker(threading.Thread):
         camera_id: str,
         site_id: str,
         source: str,
-        target_fps: float = 2.0,
+        target_fps: float = 4.0,
     ):
         super().__init__(daemon=True)
         self._manager = manager
@@ -299,24 +382,34 @@ class _BackgroundCaptureWorker(threading.Thread):
             if not cap.isOpened():
                 self._mark_dead()
                 return
+            failures = 0
             while not self._stop_event.is_set():
                 ok, frame = cap.read()
                 if not ok or frame is None:
-                    self._mark_dead()
-                    break
-                self._manager.process_frame(
-                    self._camera_id, self._site_id, frame, enforce_min_interval=False
-                )
+                    # A dropped packet on an RTSP stream is normal; only give
+                    # up after the source has failed repeatedly.
+                    failures += 1
+                    if failures >= 10:
+                        self._mark_dead()
+                        break
+                    time.sleep(0.2)
+                    continue
+                failures = 0
+                try:
+                    self._manager.process_frame(
+                        self._camera_id, self._site_id, frame, enforce_min_interval=False
+                    )
+                except Exception:
+                    logger.exception("Background capture frame failed; continuing")
                 time.sleep(self._interval)
         finally:
             cap.release()
 
     def _mark_dead(self) -> None:
-        """The capture loop is ending on its own (source never opened, or
-        read failed) rather than via an explicit `.stop()` - without this the
+        """The capture loop is ending on its own (source never opened, or reads
+        kept failing) rather than via an explicit `.stop()` - without this the
         session would keep reporting `active: true` forever even though no
-        frames are being processed anymore, which would mislead the console.
-        """
+        frames are being processed, which would mislead the console."""
         self._manager.mark_worker_dead(self._camera_id, self)
 
 

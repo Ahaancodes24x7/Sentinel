@@ -234,8 +234,24 @@ export function useSites() {
 }
 
 /* -------------------------------------------------------------------------
- * Live Safety Vision
+ * CCTV hazard monitoring
  * ---------------------------------------------------------------------- */
+
+/**
+ * Complaints the cameras filed by themselves.
+ *
+ * Polled faster than the general reports list: this drives the live filing
+ * ticker next to the feed, where the whole point is seeing a report appear in
+ * the queue seconds after the camera raised the alarm.
+ */
+export function useAutoFiledReports(site?: string, limit = 12) {
+  return useQuery({
+    queryKey: ['auto-filed-reports', site, limit],
+    queryFn: () =>
+      api.get<Paginated<ReportListItem>>(`/reports${qs({ source: 'vision', site, limit })}`),
+    refetchInterval: 5000,
+  });
+}
 
 export function useVisionCameras(siteId?: string) {
   return useQuery({

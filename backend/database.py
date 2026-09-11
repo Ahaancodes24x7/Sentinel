@@ -193,7 +193,7 @@ class PrecursorClusterModel(Base):
 
 
 class VisionEventModel(Base):
-    """Durable log of Live Safety Vision hazard events.
+    """Durable log of Camera Watch hazard events.
 
     Session-level live state (active flag, rolling people/vehicle counts,
     per-rule dedupe cooldowns) stays in-memory in
@@ -224,6 +224,23 @@ class VisionEventModel(Base):
     acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, default=_now, index=True)
 
+    # Hazard family (fire | smoke | atmosphere | person_down | impact | zone |
+    # proximity | behaviour) and the pixel regions a scene analyzer flagged.
+    # Detection boxes alone cannot express "the flame is here", so without
+    # `regions` the console could name a fire but not point at it.
+    hazard_class = Column(String(32), nullable=True, index=True)
+    regions = Column(JSON, nullable=True)
+
+    # The complaint this event filed automatically. Denormalised onto the
+    # event so the console can show "event -> report -> priority" in one
+    # fetch; `reports.report_id` remains the source of truth for the report
+    # itself.
+    auto_report_id = Column(String(64), nullable=True, index=True)
+    auto_report_priority = Column(String(8), nullable=True, index=True)
+    auto_report_bucket = Column(String(32), nullable=True)
+    auto_report_sif = Column(Boolean, nullable=True)
+    auto_report_error = Column(Text, nullable=True)
+
 
 class AuditLogModel(Base):
     __tablename__ = "audit_logs"
@@ -236,9 +253,54 @@ class AuditLogModel(Base):
     timestamp = Column(DateTime(timezone=True), nullable=False, default=_now, index=True)
 
 
+# Columns added after the first deployment. `create_all` only ever CREATEs, so
+# an existing vision_events table would silently keep the old shape and every
+# insert would fail on the unknown attribute. Alembic is heavier than this
+# project needs for purely additive, nullable columns, so the additions are
+# applied directly - each guarded by an existence check, so running it against
+# an already-migrated or brand-new database is a no-op.
+_ADDITIVE_COLUMNS: dict[str, dict[str, str]] = {
+    "vision_events": {
+        "hazard_class": "VARCHAR(32)",
+        "regions": "JSON",
+        "auto_report_id": "VARCHAR(64)",
+        "auto_report_priority": "VARCHAR(8)",
+        "auto_report_bucket": "VARCHAR(32)",
+        "auto_report_sif": "BOOLEAN",
+        "auto_report_error": "TEXT",
+    },
+}
+
+
+def _apply_additive_migrations() -> None:
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    is_postgres = engine.dialect.name == "postgresql"
+
+    for table, columns in _ADDITIVE_COLUMNS.items():
+        if table not in existing_tables:
+            continue  # create_all just made it with the full, current shape
+        have = {c["name"] for c in inspector.get_columns(table)}
+        for name, ddl_type in columns.items():
+            if name in have:
+                continue
+            sql_type = "JSONB" if (ddl_type == "JSON" and is_postgres) else ddl_type
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                print(f"Database migration: added {table}.{name}")
+            except Exception as exc:
+                # A concurrent process may have added it between the inspect
+                # and the ALTER; that is not a startup failure.
+                print(f"Notice: could not add {table}.{name}: {exc}")
+
+
 def init_db():
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist, then apply additive migrations."""
     Base.metadata.create_all(bind=engine)
+    _apply_additive_migrations()
 
 
 def get_db() -> Generator:

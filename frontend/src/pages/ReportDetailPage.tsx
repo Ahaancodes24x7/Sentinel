@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   BadgeCheck,
   Ban,
+  Camera,
   CircleAlert,
   FileText,
   PenLine,
@@ -23,6 +24,23 @@ import { PanelLoading, QueryError } from '../components/common/QueryState';
 import { useReport, useReviewAction } from '../api/hooks';
 import { BARRIER_META, BUCKET_META, type BarrierStatus, type Bucket } from '../api/types';
 import { cn } from '../lib/cn';
+
+/** P1 is "someone is dispatched now"; P4 is "log it". */
+const PRIORITY_TONE: Record<string, Tone> = {
+  P1: 'critical',
+  P2: 'high',
+  P3: 'medium',
+  P4: 'low',
+};
+
+/** Who or what produced this report - a reviewer weighs the text differently
+ *  depending on whether a person typed it, spoke it, or a camera wrote it. */
+const SOURCE_TONE: Record<string, Tone> = {
+  synthetic: 'medium',
+  real: 'low',
+  voice: 'info',
+  vision: 'violet',
+};
 
 const BUCKET_TONE: Record<Bucket, Tone> = {
   HIGH_CONF_SIF: 'critical',
@@ -201,9 +219,14 @@ export function ReportDetailPage() {
             <span>·</span>
             <span>{data.timestamp?.slice(0, 16).replace('T', ' ')}</span>
             <span>·</span>
-            <Chip tone={data.source === 'synthetic' ? 'medium' : 'low'}>
+            <Chip tone={SOURCE_TONE[String(data.source)] ?? 'low'}>
               {String(data.source).toUpperCase()}
             </Chip>
+            {cls.priority && (
+              <Chip tone={PRIORITY_TONE[cls.priority] ?? 'medium'} dot>
+                {cls.priority}
+              </Chip>
+            )}
           </div>
         </div>
 
@@ -242,6 +265,54 @@ export function ReportDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Machine-filed provenance. A reviewer must never have to guess whether
+          a person wrote this, and the priority has to arrive with the reason it
+          was chosen rather than as a bare label. */}
+      {cls.auto_filed && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-panel border border-violet/40 bg-violet-wash p-3"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Camera className="h-4 w-4 shrink-0 text-violet" strokeWidth={2.2} />
+            <span className="font-mono text-2xs tracked text-violet">
+              FILED AUTOMATICALLY BY CAMERA WATCH
+            </span>
+            {cls.priority && (
+              <Chip tone={PRIORITY_TONE[cls.priority] ?? 'medium'} dot>
+                {cls.priority} · {cls.priority_label}
+              </Chip>
+            )}
+            <Link
+              to="/live-vision"
+              className="ml-auto font-mono text-2xs tracked text-ink-3 hover:text-violet"
+            >
+              OPEN CAMERA WATCH →
+            </Link>
+          </div>
+          <p className="mt-2 text-xs text-ink-2">
+            Generated from a{' '}
+            <span className="text-ink">
+              {(cls.vision_event_type ?? 'hazard').replace(/_/g, ' ')}
+            </span>{' '}
+            event on {cls.vision_camera_name ?? cls.vision_camera_id ?? 'a site camera'}
+            {typeof cls.vision_confidence === 'number' &&
+              ` at ${(cls.vision_confidence * 100).toFixed(0)}% detection confidence`}
+            . No person has confirmed this observation on site yet.
+          </p>
+          {cls.priority_rationale && (
+            <p className="mt-1.5 text-xs text-ink-3">{cls.priority_rationale}</p>
+          )}
+          {cls.recommended_action && (
+            <p className="mt-2 border-t border-violet/25 pt-2 text-xs text-ink-2">
+              <span className="font-mono text-2xs tracked text-ink-4">REQUIRED ACTION · </span>
+              {cls.recommended_action}
+            </p>
+          )}
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         {/* ---------------- Source text with spans ---------------- */}

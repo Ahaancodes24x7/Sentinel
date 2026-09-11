@@ -1,0 +1,7 @@
+# Laptop-side bridge for the ESP32 voice node.
+#
+# Install these BEFORE joining the node's access point: that network has no
+# route to the internet, and faster-whisper downloads its model on first use.
+# Run the bridge once with --dry-run while still online to warm the model cache.
+requests>=2.31
+faster-whisper>=1.0
