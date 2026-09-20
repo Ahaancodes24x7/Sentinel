@@ -53,8 +53,19 @@ HAZARD_KEYWORD_GROUPS = {
         "crane", "lifting", "rigging", "hoist", "sling", "shackle", "winch", "rigging operation"
     ],
     "working_at_height": [
-        "height", "scaffolding", "fall", "harness", "elevated platform",
-        "ladder", "manlift", "fall arrest", "monkey board"
+        # NOT bare "fall"/"fell" (removed Week 1 external eval, ext_005):
+        # matched "the water level to fall" in a narrative with zero
+        # personnel-height pathway, silently tripping the high-energy gate
+        # via HAZARD_TO_ENERGY_MAP["working_at_height"] -> "fall from height".
+        # "fell"/"fall" are common verbs for level, pressure, price, etc.
+        # dropping - only phrases that specifically describe a PERSON falling
+        # are safe here. Verified this does not regress ext_004/ext_020 (the
+        # two external height narratives), which both independently match
+        # "scaffolding"/"harness" - see reports/week1_external_error_analysis.md.
+        "height", "scaffolding", "harness", "elevated platform",
+        "ladder", "manlift", "fall arrest", "monkey board",
+        "fell from", "fall from height", "falling from height",
+        "fell off", "fell down", "risk of falling", "fall hazard",
     ],
     "driving": [
         "vehicle", "driving", "traffic", "reversing", "forklift", "collision", "haulage"
@@ -117,7 +128,22 @@ EXPOSURE_KEYWORD_GROUPS = {
         "underneath the load", "under the suspended load",
         "worker was exposed", "worker was exposed to", "exposed to an energized electrical component",
         "was exposed to electrical energy", "exposed to electrical energy", "personnel were exposed",
-        "worker exposed to", "work was exposed to", "exposed to the live component"
+        "worker exposed to", "work was exposed to", "exposed to the live component",
+        # Real-world incident-report contact/injury constructions (Week 1 external
+        # evaluation, see reports/week1_external_error_analysis.md). These describe
+        # a person actually being contacted by the energy release - the strongest
+        # possible direct-proximity evidence there is - but were entirely absent
+        # from the original list, which was built against the synthetic
+        # generator's own phrasing and never had to describe an actual strike.
+        "struck by", "was struck by", "struck the", "was struck",
+        "pinned by", "was pinned by", "pinned the", "was pinned",
+        "crushed between", "crushed by", "was crushed",
+        "trapped between", "trapping the", "caught between",
+        "overcome by", "was overcome by",
+        "hit by", "was hit by", "collided with",
+        "resulting in fatal injuries", "resulting in serious injury", "resulting in personal injury",
+        "sustained crush injuries", "sustained serious injuries", "sustained fatal injuries",
+        "fatally injured", "fatally trapping",
     ],
     "indirect_proximity": [
         "nearby", "in the vicinity", "general work area", "adjacent area",
@@ -127,6 +153,7 @@ EXPOSURE_KEYWORD_GROUPS = {
         "not directly in the hazard path", "another team was working",
         "intermittently", "outside the marked zone", "screened from the hazard",
         "stood back from", "nearest worker",
+        "personnel in the area", "team was sent to assess", "response team entered",
     ],
 }
 
@@ -184,7 +211,25 @@ EXPLICIT_ABSENCE_PHRASES = [
     "without harness", "unsecured", "not barricaded", "without hot work permit",
     "without fire watch", "no fire watch", "missing permit", "tag missing",
     "scaffold tag missing", "barrier bypassed", "guard removed", "no loto",
-    "without loto", "loto not done", "safety harness not worn", "no barrier"
+    "without loto", "loto not done", "safety harness not worn", "no barrier",
+    # Real-world incident-report absence constructions (Week 1 external
+    # evaluation, deferred fix from reports/week1_external_error_analysis.md
+    # ext_020: "Lock-Out/Tag-Out procedures were not in use" was reading as
+    # not_mentioned rather than explicitly_absent - same root cause as the
+    # exposure gap, a phrase list built against the synthetic generator's own
+    # vocabulary. Each phrase below traces to a specific external narrative,
+    # documented in the same file.
+    "was not in use", "were not in use", "not in use",                 # ext_020
+    "was not attached", "were not attached", "not attached to",        # ext_004
+    "had not made provision for", "did not make provision for",        # ext_004
+    "failure to follow",                                               # ext_009
+    "not clearly defined",                                             # ext_018
+    "not established",                                                 # ext_018 (generalizes existing "had not been established")
+    "barrier failed", "barrier had failed", "barriers failed",         # ext_012
+    "had not included", "did not include",                             # ext_022
+    "had not been held", "was not held", "were not held",              # ext_024
+    "was not positioned to",                                           # ext_024
+    "not fully latched", "not properly latched", "only partially latched",  # ext_021
 ]
 
 UNCERTAINTY_PHRASES = [
@@ -359,6 +404,12 @@ BARRIER_TERMS = [
     "reversing spotter", "interlock", "esd trip", "fire and gas detection",
     "high-level alarm", "trip system", "lift plan", "rigging inspection",
     "load chart check", "lifting permit",
+    # Real-world drilling/offshore barrier vocabulary not covered above
+    # (Week 1 external evaluation): the concept was present in the
+    # narrative but under different wording than the synthetic-tuned list,
+    # so has_any_barrier_term never even got a chance to fire.
+    "red zone", "red-zone", "toolbox talk", "risk assessment",
+    "latched", "pinned and latched", "blind lift", "elevators",
 ]
 
 

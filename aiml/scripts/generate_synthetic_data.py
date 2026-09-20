@@ -1,11 +1,4 @@
-"""CLI entry point for generating the clearly-labelled synthetic UA/UC corpus.
 
-    python scripts/generate_synthetic_data.py --n 25000
-
-Writes data/synthetic/synthetic_uauc_reports.csv plus a companion
-dataset_card.md documenting exactly how the corpus was built and what it may
-and may not be used to claim.
-"""
 
 import argparse
 import csv
